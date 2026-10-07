@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import select
 import shlex
 import shutil
 import socket
@@ -195,3 +196,33 @@ def test_keeper_terminates_and_reaps_owned_group_on_stop(tmp_path: Path) -> None
 def test_keeper_rejects_empty_command(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         service.keeper((), tmp_path)
+
+
+def test_keeper_kills_descendant_even_after_leader_exits(tmp_path: Path) -> None:
+    socket_path = tmp_path / "tree.sock"
+    stop = threading.Event()
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(str(socket_path))
+        server.listen(1)
+        server.settimeout(5)
+        thread = threading.Thread(target=service.keeper, args=(
+            (sys.executable, str(_CHILD), "tree", str(socket_path)), tmp_path, stop,
+        ))
+        thread.start()
+        descriptor = None
+        try:
+            connection, _ = server.accept()
+            with connection:
+                connection.settimeout(5)
+                child_pid = int(connection.recv(256).decode().split()[1])
+            descriptor = os.pidfd_open(child_pid)
+            stop.set()
+            thread.join(10)
+            assert not thread.is_alive()
+            ready, _, _ = select.select([descriptor], [], [], 5)
+            assert ready == [descriptor], "descendant still running after keeper stopped"
+        finally:
+            stop.set()
+            thread.join(10)
+            if descriptor is not None:
+                os.close(descriptor)

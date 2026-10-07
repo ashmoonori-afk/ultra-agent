@@ -12,9 +12,10 @@ Modes:
 from __future__ import annotations
 
 import os
+import signal
 import socket
+import subprocess
 import sys
-import time
 
 
 def flaky(counter_path: str) -> int:
@@ -33,7 +34,7 @@ def signal_ready(socket_path: str) -> None:
         client.connect(socket_path)
         client.sendall(f"ready {os.getpid()}\n".encode())
     while True:
-        time.sleep(3600)
+        signal.pause()
 
 
 def main(argv: list[str]) -> int:
@@ -43,6 +44,13 @@ def main(argv: list[str]) -> int:
     if mode == "signal":
         signal_ready(argv[2])
         return 0
+    if mode == "ignore":
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal_ready(argv[2])
+        return 0
+    if mode == "tree":
+        child = subprocess.Popen((sys.executable, __file__, "ignore", argv[2]))
+        return child.wait()
     raise SystemExit(2)
 
 
