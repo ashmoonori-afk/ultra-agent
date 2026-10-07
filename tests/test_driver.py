@@ -113,6 +113,29 @@ def test_authoritative_wire_outcome(tmp_path: Path, mode: str, success: bool,
         assert result.error
 
 
+@pytest.mark.parametrize(
+    ("runner", "fixture", "reply"),
+    [("codex", "codex.py", None), ("claude", "claude.py", "fixture reply")],
+)
+def test_configured_runner_reaches_its_backend(
+    tmp_path: Path, runner: str, fixture: str, reply: str | None
+) -> None:
+    # Given a lane whose configuration selects a non-omo backend.
+    path = Path(__file__).parent / "fixtures" / fixture
+    config = replace(
+        config_for(tmp_path, "ok"), runner=runner,
+        command=(sys.executable, str(path), "ok"), tools=("native",) if runner == "codex" else (),
+    )
+    session = "6f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b"
+    # When the facade runs a turn.
+    result = driver.run_turn(config, session, "hello")
+    # Then that backend's protocol produced the reply and its session descriptor.
+    assert result.success, result.error
+    if reply is not None:
+        assert result.text == reply
+    assert (config.sessions_dir / f"{session}.jsonl").is_file()
+
+
 @pytest.mark.parametrize("mode", ["huge", "huge_stderr"])
 def test_output_cap(tmp_path: Path, mode: str) -> None:
     config = config_for(tmp_path, mode)
