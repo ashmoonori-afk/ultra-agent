@@ -65,10 +65,11 @@ def main() -> None:
     if args[:1] == ["mcp"]:
         mcp_mode(mode)
         return
-    resumed = args[:1] == ["exec"] and args[1:2] == ["resume"]
+    resumed = args[:1] == ["exec"] and "resume" in args
+    position = args.index("resume") if resumed else -1
     thread_id = (
         str(uuid.uuid4()) if mode == "mismatch"
-        else args[2] if resumed and len(args) > 2
+        else args[position + 1] if resumed and len(args) > position + 1
         else str(uuid.uuid4())
     )
     if mode == "malformed":

@@ -111,7 +111,8 @@ def test_resume_uses_saved_native_id_and_reply_path(
     assert result.success
     assert result.text == "resumed reply"
     argv = _argv(_exec_calls(log)[-1])
-    assert argv[:3] == ["exec", "resume", native]
+    assert argv[-3:] == ["resume", native, "-"]
+    assert argv.index("--sandbox") < argv.index("resume")
 
 
 def test_restriction_flags_present_and_each_mcp_disabled(

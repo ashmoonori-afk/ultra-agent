@@ -95,19 +95,17 @@ def _mcp_names(result: CheckResult) -> tuple[str, ...]:
 def _command(
     config: Config, resumed_id: str | None, restrictions: tuple[str, ...]
 ) -> tuple[str, ...]:
-    if resumed_id is None:
-        parts = [
-            *config.command, "exec", "--json", "--skip-git-repo-check",
-            "--sandbox", config.codex_sandbox, "-c", 'approval_policy="never"',
-        ]
-    else:
-        parts = [
-            *config.command, "exec", "resume", resumed_id, "--json", "--skip-git-repo-check",
-            "--sandbox", config.codex_sandbox, "-c", 'approval_policy="never"',
-        ]
+    # Options precede the `resume` subcommand: `--sandbox` is not a global flag in
+    # codex-rs/exec/src/cli.rs, so `exec resume <id> --sandbox ...` would be rejected.
+    parts = [
+        *config.command, "exec", "--json", "--skip-git-repo-check",
+        "--sandbox", config.codex_sandbox, "-c", 'approval_policy="never"',
+    ]
     if config.model:
         parts += ["--model", config.model]
     parts += restrictions
+    if resumed_id is not None:
+        parts += ["resume", resumed_id]
     parts.append("-")
     return tuple(parts)
 
