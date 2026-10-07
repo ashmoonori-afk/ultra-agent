@@ -180,6 +180,10 @@ def _slack_router(method: str, path: str, body: Any) -> Response:
     if name == "chat.update":
         ts = body.get("ts", "1.5") if isinstance(body, dict) else "1.5"
         return 200, {"ok": True, "ts": ts}, ()
+    if name in ("conversations.history", "conversations.replies"):
+        return 200, {"ok": True, "messages": []}, ()
+    if name == "subscriptions.thread.getView":
+        return 200, {"ok": True, "threads": []}, ()
     return 200, {"ok": True}, ()
 
 
