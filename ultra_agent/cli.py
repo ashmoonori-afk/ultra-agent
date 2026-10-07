@@ -27,7 +27,7 @@ import signal
 import threading
 import uuid
 from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import FrameType
 from typing import Final, TypeAlias, TypeGuard
@@ -54,7 +54,17 @@ from ultra_agent.relay import RelayError, create_relay_server, push_status_file
 from ultra_agent.runner_lock import RunnerBusy
 from ultra_agent.runtime import Runtime, TickResult
 from ultra_agent.service import ServiceError
+from ultra_agent.setup import run_setup
+from ultra_agent.setup_agents import SetupAgentError
+from ultra_agent.setup_config import SetupConfigError
 from ultra_agent.slack import SlackError, UnsupportedCapabilityError
+from ultra_agent.startup import (
+    READY_FD_ENV,
+    StartupError,
+    notify_ready,
+    service_environment,
+    stop_background,
+)
 from ultra_agent.store import StoreError
 from ultra_agent.telegram import TelegramError
 
@@ -402,9 +412,17 @@ def _cmd_once(args: argparse.Namespace, factory: RuntimeFactory) -> int:
 def _cmd_run(args: argparse.Namespace, factory: RuntimeFactory) -> int:
     runtime = _runtime(args, factory)
     stop = threading.Event()
+    announced = threading.Event()
+
+    def emit(tick: TickResult) -> None:
+        _emit({"ok": True, "tick": _tick_json(tick)})
+        if not announced.is_set():
+            announced.set()
+            notify_ready()
+
     with _signal_stop(stop):
         try:
-            runtime.run(stop, lambda tick: _emit({"ok": True, "tick": _tick_json(tick)}))
+            runtime.run(stop, emit)
         except KeyboardInterrupt:
             pass
     _emit({"ok": True, "stopped": True})
@@ -761,14 +779,33 @@ def _cmd_keeper(args: argparse.Namespace, _factory: RuntimeFactory) -> int:
     if not argv:
         raise CliError("keeper requires a command after its options")
     cwd = Path(str(args.cwd)).expanduser() if _opt_str(args, "cwd") else config.work_dir
+    raw_ready = os.environ.pop(READY_FD_ENV, None)
+    ready_fd = int(raw_ready) if raw_ready is not None else None
     stop = threading.Event()
     with _signal_stop(stop):
         try:
-            code = service.keeper(tuple(argv), cwd, stop)
+            code = service.keeper(tuple(argv), cwd, stop, ready_fd=ready_fd)
         except KeyboardInterrupt:
             code = 0
     _emit({"ok": code == 0, "exit_code": code})
     return 0 if code == 0 else 1
+
+
+def _cmd_setup(args: argparse.Namespace, _factory: RuntimeFactory) -> int:
+    result = run_setup(_workspace(args), os.environ)
+    _emit({
+        "ok": result.ready, "workspace": str(result.workspace), "runner": result.runner,
+        "executable": str(result.executable), "service": result.service,
+        "ready": result.ready, "already_running": result.already_running,
+        "pid": result.pid,
+    })
+    return 0 if result.ready else 1
+
+
+def _cmd_stop(args: argparse.Namespace, _factory: RuntimeFactory) -> int:
+    stopped = stop_background(_load(args))
+    _emit({"ok": True, "stopped": stopped})
+    return 0
 
 
 def _cmd_skill_path(_args: argparse.Namespace, _factory: RuntimeFactory) -> int:
@@ -942,6 +979,11 @@ def build_parser() -> argparse.ArgumentParser:
     keeper.add_argument("command_argv", nargs=argparse.REMAINDER)
 
     _ = sub.add_parser("skill-path", help="print the packaged operator skill path")
+    _ = sub.add_parser(
+        "setup",
+        help="detect codex/claude/omo, configure a messenger and start the agent",
+    )
+    _ = sub.add_parser("stop", help="stop the background agent started by setup")
 
     return parser
 
@@ -960,6 +1002,8 @@ _SIMPLE_HANDLERS: Final[dict[str, CommandHandler]] = {
     "rotate": _cmd_rotate,
     "keeper": _cmd_keeper,
     "skill-path": _cmd_skill_path,
+    "setup": _cmd_setup,
+    "stop": _cmd_stop,
 }
 
 _GROUP_HANDLERS: Final[dict[str, dict[str, CommandHandler]]] = {
@@ -1032,7 +1076,15 @@ def main(
     args = parser.parse_args(argv)
     handler = _dispatch(args)
     try:
-        return handler(args, runtime_factory)
+        with ExitStack() as scope:
+            if args.command not in ("init", "setup") and isinstance(args.workspace, str):
+                try:
+                    config = load_config(Path(args.workspace).expanduser())
+                except ConfigError:
+                    config = None
+                if config is not None:
+                    scope.enter_context(service_environment(config))
+            return handler(args, runtime_factory)
     except KeyboardInterrupt:
         _emit({"ok": False, "interrupted": True})
         return 130
@@ -1052,6 +1104,9 @@ def main(
         ServiceError,
         RunnerBusy,
         SlotUnavailable,
+        SetupAgentError,
+        SetupConfigError,
+        StartupError,
         TransportError,
         OSError,
         ValueError,

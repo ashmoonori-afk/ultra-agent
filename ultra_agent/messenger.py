@@ -306,7 +306,9 @@ class Messenger:
 
     def _build_adapter(self, messenger: MessengerConfig) -> Transport:
         platform = messenger.platform
-        base_url = self._base_urls.get(platform, _DEFAULT_BASE_URLS[platform])
+        base_url = (
+            self._base_urls.get(platform) or messenger.base_url or _DEFAULT_BASE_URLS[platform]
+        )
         if platform == "discord":
             return DiscordTransport(
                 messenger, self._store, self._http, base_url=base_url, clock=self._clock
