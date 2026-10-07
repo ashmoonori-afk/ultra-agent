@@ -4,14 +4,17 @@
 
 ultra-agent is one small, locally operated package that keeps an existing omo
 agent useful after a chat window closes. The operator supplies an omo login,
-an isolated workspace and, optionally, a Discord bot. The package supplies
+an isolated workspace and optional Discord, Telegram or Slack credentials. The package supplies
 durable memory, an approval queue, scheduling, monitors, session continuity,
 handoff and status delivery. It does not supply another model platform.
 
 The Python distribution and command are `ultra-agent`; the import package is
-`ultra_agent`. Python 3.11 or newer is required. The only mandatory runtime
-dependency is `birkin-mnemosyne==0.4.0`. Configuration, SQLite, process control,
-HTTP and the CLI use the standard library. Development checks are separate.
+`ultra_agent`. Python 3.11 or newer is required. Runtime dependencies are
+`birkin-mnemosyne==0.4.0` and pure-Python `websocket-client` for presence sockets.
+Configuration, SQLite, process control, HTTP and the CLI use the standard
+library. No additional JavaScript runtime is introduced. Development checks
+are separate. One configuration and a packaged operator skill cover the entire
+command surface. Writing style is a user setting, not a hard-coded persona.
 
 The repository is public. Package registry publishing and release tags are not
 part of this delivery. Runtime configuration, memory, database files, status
@@ -31,6 +34,11 @@ logs, conversations and private research must never enter its Git history.
 | Background work | Persistent schedules, change monitors and a supervised daemon | Closing chat should not delete pending work |
 | Observable progress | Local status, durable replies and explicit send uncertainty | Network errors must not turn into false success |
 | Reproducible delivery | Public-source hygiene, deterministic tests, CLI/HTTP proof and CI | A passing unit test is not installation or operational proof |
+| Tracked lanes | Per-lane sessions, states and explicit sync drift | A job queue alone cannot track a longer task |
+| Verified closure | Five-minute objection window, live Done checks and pushed work | A completion claim must not close a lane |
+| Host protection | can-launch HOLD and one host-wide heavy slot | Separate workspaces must not overload a host |
+| Shared messaging | One command for three transports, including untagged Slack replies | Platform-specific scripts fragment operations |
+| Host continuity | Authenticated multi-machine relay and reboot service | A local append file cannot cross machines |
 
 ## Upstream decisions and provenance
 
@@ -48,6 +56,7 @@ behavior, not a claim that the upstream applications are bundled.
 | [open-dots](https://github.com/Anil-matcha/open-dots) | `55c9ddd32e49196b93689651e6e5cdef3f5fdd16` | No license file verified. Reference default-ask approval ideas only. |
 | [opendots](https://github.com/milisp/opendots) | `6136450e6151e5a8e5d30d070bbf7bd14aab66ab` | No license file verified. Reference separate workspace/memory and persistent automation ideas only. |
 | [CopilotKit/OpenBot](https://github.com/CopilotKit/OpenBot) | `17831b2415b3f764cdb07110ca68fdab18fe8b2d` | MIT. Reference explicit approval and adapter boundaries. Exclude its browser studio and database/server stack. |
+| [omo-dori-mode-experimental](https://github.com/ashmoonori-afk/omo-dori-mode-experimental) | `742f09df4cca2816cda275ec2de9b2acf95272e2` | MIT. Adapt skill/CLI/config packaging, lane registry/sync, timed objection/live verification, host HOLD/heavy slots and messenger contracts. Retain its MIT notice for the behavioral adaptation. Exclude terminal-tab coupling, personal onboarding and destructive worktree cleanup. |
 
 License files, not repository descriptions, decide code-reuse eligibility.
 Vendor-specific licenses do not license an entire application. See NOTICE for
@@ -59,10 +68,12 @@ their own documented interface and license review; none is advertised here.
 ```text
 CLI / daemon
     -> configuration + durable SQLite queue
-    -> Discord REST intake / outbox
+    -> Discord / Telegram / Slack intake and outbox
+    -> lane registry / live completion checks / host guard
     -> schedules / file and command monitors / status-file relay
     -> serialized omo JSON process
     -> Mnemosyne vault / compaction guard / handoff
+    -> authenticated multi-machine relay / reboot service
 ```
 
 The core is synchronous and bounded. One process owns the execution lock, and
@@ -83,7 +94,13 @@ Modules have narrow ownership:
 - `memory.py`: the only Mnemosyne importer; provenance-enabled writes and recall.
 - `driver.py`: exact omo argv, JSON events, deadlines and process-group cleanup.
 - `discord.py`: authenticated REST requests, parsing, intake and reply transport.
+- `http.py`, `telegram.py`, `slack.py`, `presence.py`, `messenger.py`: shared
+  wire boundary, platform adapters, sockets and unified dispatch.
 - `automation.py`: schedules, file/command probes and complete-line relay.
+- `registry.py`, `completion.py`: lane history, session sync, claim deadlines
+  and live Done verification.
+- `host.py`: resource probes, explicit HOLD and a host-wide heavy lock.
+- `relay.py`, `service.py`: authenticated network relay and reboot setup.
 - `runtime.py`: lifecycle, approval, execution, recovery and handoff.
 - `cli.py`: argparse commands and machine-readable results.
 
@@ -115,6 +132,82 @@ If a chunk is uncertain, later chunks wait for reconciliation.
 Exactly-once external effects are not promised. The same local state can mean
 "reserved but never started" or "action happened but confirmation was lost."
 Exposing this distinction is preferable to silently duplicating work.
+
+Following the Dori completion-evidence pattern, a locally configured optional
+`verification_command` runs after a successful agent turn. It is fixed argv,
+not a command supplied by the model, and uses the same process cleanup and
+credential-isolation boundary. A failed check prevents successful completion.
+The persisted `verified` field is true only after this check succeeds.
+Without a check, `completed` means the agent process completed, not that its
+natural-language claim has been independently proven. Neither branch silently
+closes an external task or deletes a worktree.
+
+## Lanes and live completion
+
+Each lane has a validated key, role, host, working directory, exact session ID,
+optional authoritative session file, worktrees, Done signals and status history.
+Statuses are `working`, `done-claimed`, `verified-done`, `not-done`, and `closed`.
+Lane state is separate from job state. `lane sync` reports absent/changed
+session headers, missing Done criteria, interrupted runs and unregistered
+session files. `--write` only adopts an unambiguous authoritative header and
+refuses to change an active lane.
+
+`lane claim KEY --evidence TEXT` records a durable deadline exactly 300 seconds
+after the claim. An objection records `not-done` with reasons and cancels that
+claim. Repeated ticks do not move the deadline. At or after it, re-read all live
+Done signals and Git state. Supported signals are merged pull request, closed
+issue, exact published npm version and a configured fixed verification argv.
+These are read-only checks; a published-version signal never publishes anything.
+
+Each declared worktree must have readable Git state, no tracked or untracked
+work, and no commits absent from its remotes. Refresh remote refs; unavailable
+remotes or missing evidence refuse closure. Recheck before closing. Only then
+record `verified-done` and `closed` with receipts. Failure records `not-done`
+and keeps the lane. Closing never deletes a worktree, kills an unrelated
+process or merges/pushes anything.
+
+## Host guard and heavy slot
+
+`host can-launch` reports `READY` or `HOLD` with reasons. Defaults are 20 percent
+available memory, 1 GiB available disk and 20 active lanes; a zero lane cap
+disables that cap. CPU load is reported, not a launch veto. Missing measurements
+mean HOLD. Linux memory uses MemAvailable; disk uses the configured workspace.
+
+Heavy launches acquire a host-wide advisory lock in the operator's local state
+directory, shared by separate workspaces. Default capacity is one heavy
+process. A held slot leaves work queued and reports HOLD. The slot surrounds
+the actual process lifetime, including timeout cleanup. Jobs run locally;
+other hosts run the same package independently and relay status. The package
+does not silently SSH to a host or treat a stale heartbeat as launch authority.
+
+## Unified messenger and capabilities
+
+`messenger send PLATFORM --to TARGET --text TEXT [--thread ID] [--edit ID]`
+is one entry point. `messenger inbound PLATFORM --once`, `messenger typing`
+and `messenger presence` share configuration and credential isolation.
+Every adapter uses durable source keys and the same approval/outbox rules.
+
+| Capability | Discord | Telegram | Slack |
+| --- | --- | --- | --- |
+| Send/edit | REST messages | sendMessage/editMessageText | chat.postMessage/chat.update |
+| Inbound | history cursor | getUpdates offset | tracked/configured thread replies and channel history |
+| Typing | channel typing endpoint | sendChatAction | Explicit unsupported-capability error |
+| Presence | gateway heartbeat | Explicit unsupported-capability error | user-session client socket; away on release |
+
+Dori has no Slack typing implementation and no Telegram presence. Unsupported
+operations fail visibly, never as successful no-ops. Slack reply acceptance
+depends on configured channels, allowed authors and tracked/configured threads,
+not a bot mention. Polling paginates and persists reply timestamps. User-session
+mode may discover subscribed threads through the client API; failures of this
+unofficial API are explicit, not replaced by fabricated data.
+
+Slack REST reads a named token environment variable. User-session presence and
+subscribed-thread discovery additionally read a named cookie environment
+variable. Credentials are operator supplied, never extracted from a browser.
+The client WebSocket API is unofficial and can change. Discord presence follows
+Hello/Identify/Ready/Heartbeat. Socket shutdown and reconnect are bounded.
+Status distinguishes a connected socket from verified visible availability.
+Tokens, cookies and Telegram token-bearing URLs are redacted from diagnostics.
 
 ## Discord contract
 
@@ -191,10 +284,29 @@ Status-file relay tracks file identity and byte offsets. Only complete
 text at different offsets remains two events. Truncation/rotation resets the
 appropriate cursor. Delivery uses the same durable outbox and uncertainty rules.
 
+## Multi-machine relay and reboot recovery
+
+An opt-in HTTP receiver replaces deployment-specific SSH scripts. `relay serve`
+accepts bounded `/v1/status` JSON with a configured source, sequence and status
+text. A source-specific bearer secret comes from its environment variable;
+destination routing is local config, never a remote request parameter.
+Authenticate before accepting state; insert source/sequence and outbox together.
+Duplicate sends return the existing receipt; stale/out-of-order input fails.
+`relay push` sends complete new file lines from a durable cursor; failed pushes
+leave the cursor unchanged. Non-loopback clients require HTTPS.
+
+`service render/install` provides a systemd user service with restart-on-failure,
+control-group cleanup and explicit workspace/config. Installation and enabling
+are operator commands, never import side effects. User-manager boot restarts the
+daemon; unattended boot needs the host's user-manager/linger setup documented in
+the README. Keeper mode supervises a child without systemd but does not itself
+register a boot hook. Recovery after reboot uses the same uncertain-job and
+handoff rules.
+
 ## Verification and release gate
 
 Tests use temporary workspaces, a real SQLite database, actual Mnemosyne and an
-HTTP-level Discord fixture, not mocks of the integration being asserted.
+HTTP-level messenger fixtures, not mocks of the integration being asserted.
 Subprocess fixtures exercise the exact omo event contract and process cleanup.
 Clocks are injected; synchronization uses events or process completion, not
 fixed sleeps. Live omo is exercised separately with tools disabled.
@@ -203,8 +315,12 @@ Acceptance covers installation, persisted memory, allowlists, approval,
 duplicate intake, crash cut points, ambiguous delivery, more than one history
 page, Unicode reply chunks, rate limits, timeout cleanup, compaction handling,
 schedule recovery, monitor changes, relay partial writes and a second runner.
-Without live bot credentials, the report must label real Discord service
-verification unavailable; a loopback fixture is not a live Discord result.
+Additional acceptance covers lane sync, clock-controlled 299/300-second
+objection boundaries, false Done claims, dirty/unpushed work, cross-workspace
+heavy slots, untagged Slack replies, typing/presence wire behavior, authenticated
+two-node relay and service restart configuration. Without live credentials, the
+report labels real service verification unavailable; a loopback fixture is not
+a live Discord, Slack or Telegram result.
 
 Before every push, scan current/indexed files and every reachable Git object,
 including commit metadata, for secrets and private identifiers. Use a public
