@@ -1,11 +1,68 @@
 # ultra-agent
 
-A small, locally operated personal-agent runtime that keeps an existing
-`omo` login useful after a chat window
-closes. It wraps the `omo` CLI with durable memory, a local approval queue,
-session continuity and handoff, tracked lanes with verified closure, a host
-guard, Discord/Telegram/Slack delivery, schedules, monitors and a multi-machine
-status relay. It is not a model platform and does not replace `omo`.
+A small, locally operated personal-agent runtime that turns the coding agent
+you already use — **Codex CLI, Claude Code or omo** — into an always-on agent
+that keeps working after the chat window closes. It adds durable memory, a
+local approval queue, session continuity and handoff, tracked lanes with
+verified closure, a host guard, Discord/Telegram/Slack delivery, schedules,
+monitors and a multi-machine status relay. It is not a model platform and does
+not replace your agent CLI or its login.
+
+## One-command setup (Linux / WSL)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashmoonori-afk/ultra-agent/main/install.sh | bash
+```
+
+That single command:
+
+1. installs ultra-agent into `~/.local/share/ultra-agent` (it uses your Python
+   3.11+ or, if missing, a user-local [uv](https://docs.astral.sh/uv/) Python;
+   no `sudo`, no shell-profile edits);
+2. finds a native `codex`, `claude` or `omo` on your `PATH` (preferring Codex,
+   then Claude Code, then omo). If none is found it installs Codex with its
+   official installer. Windows shims seen through WSL are not used;
+3. checks the CLI's own login status and, on a terminal, runs its normal login
+   if needed. Your provider credentials stay with that CLI and are never read
+   or copied;
+4. asks only for the messenger platform (`discord`, `telegram` or `slack`), the
+   bot token (hidden), the channel/chat ID and **your own user ID** — the only
+   sender allowed to give the agent work;
+5. writes a private workspace (`0700`) with the token in `state/service.env`
+   (`0600`), never in the TOML, argv or logs, and starts the agent. It reports
+   success only after the agent's first real polling tick.
+
+The agent then answers your messages in that channel. Every incoming request
+waits for your local approval (`ultra-agent --workspace … approve ID`) unless
+you configure otherwise. Run the command again at any time: an existing
+configuration and a running agent are kept, not overwritten or duplicated.
+
+Unattended setup uses environment variables instead of prompts:
+
+```bash
+ULTRA_AGENT_NONINTERACTIVE=1 ULTRA_AGENT_RUNNER=claude \
+ULTRA_AGENT_PLATFORM=discord ULTRA_AGENT_BOT_TOKEN="$TOKEN" \
+ULTRA_AGENT_CHANNEL=123 ULTRA_AGENT_USER=456 \
+  bash -c 'curl -fsSL https://raw.githubusercontent.com/ashmoonori-afk/ultra-agent/main/install.sh | bash'
+```
+
+`ULTRA_AGENT_RUNNER` is `auto` (default), `codex`, `claude` or `omo`.
+`ULTRA_AGENT_SERVICE` is `auto` (a systemd user service when available,
+otherwise a supervised background process), `systemd` or `process`. Stop a
+background agent with `ultra-agent --workspace WORKSPACE stop`. A systemd unit
+is managed with `systemctl --user`; starting it at boot without a login needs
+`loginctl enable-linger`, which setup does not change for you.
+
+### Backend notes
+
+| | Codex CLI | Claude Code | omo |
+| --- | --- | --- | --- |
+| Session continuity | `exec resume <thread>` | `--session-id` then `--resume` | `--session-id` |
+| Default (`tools = []`) | read-only sandbox; shell, web search and every configured MCP server disabled | built-in tools off, MCP off, prompts denied | `--no-tools` |
+| Broader tools | `tools = ["native"]` with `codex_sandbox = "workspace-write"` | `tools = ["Read", ...]` | `tools = [...]` |
+
+Codex has no per-tool allowlist, so only `[]` or `["native"]` are accepted.
+No backend is ever run with a permission-bypass flag.
 
 Repository: <https://github.com/ashmoonori-afk/ultra-agent>
 
@@ -33,8 +90,8 @@ install this project. Always install from the GitHub URL below.
 ## Requirements
 
 - **Python 3.11 or newer.**
-- **An existing, already-authenticated `omo` CLI on `PATH`.** ultra-agent neither
-  installs nor configures `omo`; it drives the login you already have.
+- **One agent CLI**: Codex CLI, Claude Code or omo. One-command setup installs
+  Codex or Claude Code when missing; omo must already be installed.
 - **Two runtime dependencies**, installed automatically: `birkin-mnemosyne`
   (the memory vault) and `websocket-client` (pure Python, for the presence
   sockets). Everything else uses the standard library.
@@ -42,7 +99,7 @@ install this project. Always install from the GitHub URL below.
   advisory locks). Do not put the workspace on a network share or a
   Windows-mounted path such as `/mnt/c`.
 
-## Install
+## Manual install (advanced)
 
 From GitHub into a virtual environment:
 
