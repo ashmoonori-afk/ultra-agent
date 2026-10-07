@@ -175,13 +175,38 @@ def test_send_without_thread_tracks_own_timestamp(
 
 def test_edit_calls_chat_update(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SLACK_TOKEN", _TOKEN)
-    route = _make_router({"chat.update": {"ok": True}})
+    route = _make_router({"chat.update": {"ok": True, "ts": "2.1", "channel": "C1"}})
     store = _store(tmp_path)
     with _SlackServer(route) as server:
         transport = _transport(server, store, _config())
-        transport.edit("C1", "2.1", "edited")
+        assert transport.edit("C1", "2.1", "edited") == "2.1"
         record = server.calls("chat.update")[0]
     assert record["body"] == {"channel": "C1", "ts": "2.1", "text": "edited"}
+
+
+@pytest.mark.parametrize("method", [
+    "conversations.history", "conversations.replies",
+    "subscriptions.thread.getView", "chat.update",
+])
+def test_missing_required_slack_payload_is_an_error(tmp_path, monkeypatch, method):
+    monkeypatch.setenv("SLACK_TOKEN", _TOKEN)
+    monkeypatch.setenv("SLACK_COOKIE", "fixture-cookie")
+    route = _make_router({method: {"ok": True}})
+    store = _store(tmp_path)
+    config = _config(
+        cookie_env="SLACK_COOKIE",
+        threads=(ThreadRef(channel_id="C1", thread_id="1.0"),),
+    )
+    with _SlackServer(route) as server:
+        transport = _transport(server, store, config)
+        with pytest.raises(SlackError):
+            if method == "chat.update":
+                transport.edit("C1", "2.1", "edited")
+            else:
+                transport.poll()
+    if method == "conversations.history":
+        assert store.get_checkpoint("slack:history:C1") is None
+    assert store.list_jobs() == []
 
 
 def test_typing_is_explicitly_unsupported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

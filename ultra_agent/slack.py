@@ -235,7 +235,9 @@ class SlackTransport:
             raise ValueError("slack edit requires a channel")
         body = self._call("chat.update", {"channel": channel, "ts": ts, "text": text})
         remote = body.get("ts")
-        return remote if isinstance(remote, str) else ts
+        if not isinstance(remote, str) or _decimal_ts(remote) is None:
+            raise SlackError("slack chat.update returned no message timestamp")
+        return remote
 
     def typing(self, channel: str, thread_id: str | None = None) -> NoReturn:
         """Always fail: Slack exposes no typing indicator for this transport."""
@@ -321,12 +323,9 @@ class SlackTransport:
                 call["cursor"] = cursor
             body = self._call(method, call)
             items = body.get(items_key)
-            if items is None:
-                page: list[JSONValue] = []
-            elif isinstance(items, list):
-                page = items
-            else:
+            if not isinstance(items, list):
                 raise SlackError(f"slack {method} returned an invalid {items_key} payload")
+            page = items
             for item in page:
                 if isinstance(item, dict):
                     collected.append(item)
@@ -346,8 +345,6 @@ class SlackTransport:
         """Track subscribed threads discovered via the unofficial client view."""
         body = self._call("subscriptions.thread.getView", {"limit": THREADS_VIEW_LIMIT})
         threads = body.get("threads")
-        if threads is None:
-            return
         if not isinstance(threads, list):
             raise SlackError("slack subscriptions.thread.getView returned an invalid payload")
         for thread in threads:
@@ -386,7 +383,9 @@ class SlackTransport:
                 {"channel": channel, "limit": DEFAULT_PAGE_LIMIT},
             )
             messages = body.get("messages")
-            newest = _newest_ts(messages) if isinstance(messages, list) else None
+            if not isinstance(messages, list):
+                raise SlackError("slack conversations.history returned an invalid messages payload")
+            newest = _newest_ts(messages)
             if newest is None:
                 newest = _format_ts(self._clock())
             return self._store.enqueue_batch([], (key, newest))
