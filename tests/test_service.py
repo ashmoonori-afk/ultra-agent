@@ -42,6 +42,8 @@ def test_render_service_quotes_spaces_backslashes_and_percent(tmp_path: Path) ->
     text = service.render_service(workspace, executable="/opt/ultra agent/bin")
 
     assert "Restart=on-failure" in text
+    assert "Type=notify" in text
+    assert "NotifyAccess=main" in text
     assert "RestartSec=5" in text
     assert "KillMode=control-group" in text
     assert "WantedBy=default.target" in text
@@ -226,3 +228,48 @@ def test_keeper_kills_descendant_even_after_leader_exits(tmp_path: Path) -> None
             thread.join(10)
             if descriptor is not None:
                 os.close(descriptor)
+
+
+def test_keeper_ready_descriptor_only_reaches_first_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    fixture = Path(__file__).parent / "fixtures" / "startup_child.py"
+    counter = tmp_path / "children.jsonl"
+    reader, writer = os.pipe()
+    monkeypatch.setenv("ULTRA_AGENT_READY_FD", "stale")
+    try:
+        assert service.keeper(
+            (sys.executable, str(fixture), "restart", str(counter)),
+            tmp_path,
+            wait=lambda _timeout: False,
+            ready_fd=writer,
+        ) == 0
+        children = [json.loads(line) for line in counter.read_text().splitlines()]
+        assert children == [{"ready_fd": str(writer)}, {"ready_fd": None}]
+        assert os.read(reader, 1) == b""
+        with pytest.raises(OSError):
+            os.fstat(writer)
+    finally:
+        os.close(reader)
+
+
+def test_keeper_closes_ready_descriptor_on_spawn_failure(tmp_path: Path) -> None:
+    reader, writer = os.pipe()
+    try:
+        with pytest.raises(FileNotFoundError):
+            service.keeper(("/no/such/executable",), tmp_path, ready_fd=writer)
+        assert os.read(reader, 1) == b""
+    finally:
+        os.close(reader)
+
+
+def test_keeper_closes_ready_descriptor_when_command_is_invalid(tmp_path: Path) -> None:
+    reader, writer = os.pipe()
+    try:
+        with pytest.raises(ValueError):
+            service.keeper((), tmp_path, ready_fd=writer)
+        assert os.read(reader, 1) == b""
+    finally:
+        os.close(reader)

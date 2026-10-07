@@ -10,7 +10,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 EnvironmentFile=-%h/ultra-agent/state/service.env
 ExecStart=%h/.local/bin/ultra-agent --workspace %h/ultra-agent run
 Restart=on-failure

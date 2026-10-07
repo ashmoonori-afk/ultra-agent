@@ -34,12 +34,12 @@ can run without sleeping.
 from __future__ import annotations
 
 import os
+import selectors
 import shutil
 import signal
 import subprocess
 import sys
 import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -124,7 +124,8 @@ def render_service(workspace: Path, executable: Path | str = _EXECUTABLE_DEFAULT
             "Wants=network-online.target",
             "",
             "[Service]",
-            "Type=simple",
+            "Type=notify",
+            "NotifyAccess=main",
             environment_line,
             f"ExecStart={exec_start}",
             "Restart=on-failure",
@@ -184,21 +185,23 @@ def install_service(
     return unit_path
 
 
-def _terminate_group(process: subprocess.Popen[bytes]) -> None:
+def terminate_group(
+    process: subprocess.Popen[bytes],
+    *,
+    grace_seconds: float = _TERMINATE_GRACE_SECONDS,
+) -> None:
     """Terminate, then if needed kill, the child's whole process group."""
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
-    deadline = time.monotonic() + _TERMINATE_GRACE_SECONDS
-    gate = threading.Event()
-    while os.waitid(
-        os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT
-    ) is None:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        gate.wait(min(0.05, remaining))
+    descriptor = os.pidfd_open(process.pid)
+    try:
+        with selectors.DefaultSelector() as events:
+            events.register(descriptor, selectors.EVENT_READ)
+            events.select(grace_seconds)
+    finally:
+        os.close(descriptor)
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -226,6 +229,8 @@ def keeper(
     cwd: Path,
     stop_event: threading.Event | None = None,
     wait: Callable[[float], bool] | None = None,
+    *,
+    ready_fd: int | None = None,
 ) -> int:
     """Supervise ``command`` in ``cwd``, restarting nonzero exits.
 
@@ -234,26 +239,47 @@ def keeper(
     ``0``; a nonzero exit is retried after bounded exponential backoff. The
     ``wait(timeout) -> bool`` callable drives both the exit poll and the backoff
     (default: block on ``stop_event``), and returns true once a stop was seen.
+    ``ready_fd`` transfers ownership to the keeper, which forwards it only to
+    the first child and closes its own copy even if spawning fails. Restarted
+    children have neither that descriptor nor ULTRA_AGENT_READY_FD.
     No boot hook is installed.
     """
     if not command:
+        if ready_fd is not None:
+            os.close(ready_fd)
         raise ValueError("keeper command must not be empty")
     cwd_path = Path(cwd)
     stop = stop_event if stop_event is not None else threading.Event()
     waiter: Callable[[float], bool] = wait if wait is not None else stop.wait
     backoff = _BACKOFF_INITIAL_SECONDS
-    while True:
-        if stop.is_set():
-            return 0
-        process = subprocess.Popen(command, cwd=os.fspath(cwd_path), start_new_session=True)
-        try:
-            code, stopped = _await_exit(process, stop, waiter)
-        finally:
-            _terminate_group(process)
-        if stopped:
-            return 0
-        if code == 0:
-            return 0
-        if waiter(backoff) or stop.is_set():
-            return 0
-        backoff = min(backoff * 2.0, _BACKOFF_MAX_SECONDS)
+    try:
+        while True:
+            if stop.is_set():
+                return 0
+            environment = dict(os.environ)
+            environment.pop("ULTRA_AGENT_READY_FD", None)
+            if ready_fd is not None:
+                environment["ULTRA_AGENT_READY_FD"] = str(ready_fd)
+            try:
+                process = subprocess.Popen(
+                    command, cwd=os.fspath(cwd_path), start_new_session=True,
+                    env=environment, pass_fds=() if ready_fd is None else (ready_fd,),
+                )
+            finally:
+                if ready_fd is not None:
+                    os.close(ready_fd)
+                    ready_fd = None
+            try:
+                code, stopped = _await_exit(process, stop, waiter)
+            finally:
+                terminate_group(process)
+            if stopped:
+                return 0
+            if code == 0:
+                return 0
+            if waiter(backoff) or stop.is_set():
+                return 0
+            backoff = min(backoff * 2.0, _BACKOFF_MAX_SECONDS)
+    finally:
+        if ready_fd is not None:
+            os.close(ready_fd)
