@@ -7,8 +7,10 @@ unbounded identifiers or argv, duplicate names, ambiguous schedule/monitor
 definitions and any embedded secret are rejected with a :class:`ConfigError`.
 
 Credentials are referenced only by environment-variable name (``token_env``,
-``cookie_env``); secret values never live in configuration. Transport endpoints
-are fixed by each client, so no arbitrary endpoint key is accepted.
+``cookie_env``); secret values never live in configuration. A messenger may
+override its transport endpoint only with the canonical host of its own platform
+over HTTPS, or an explicit loopback HTTP address; no arbitrary endpoint key is
+accepted.
 
 Initialization is explicit: :func:`init_workspace` creates the private
 ``work``/``vault``/``state``/``sessions``/``handoffs`` directories and the
@@ -39,6 +41,8 @@ from ultra_agent.models import (
     RelayPeer,
     RelayServerConfig,
     RelaySource,
+    RunnerKind,
+    SandboxMode,
     Schedule,
     ThreadRef,
 )
@@ -55,6 +59,14 @@ MAX_THREADS = 100
 
 PLATFORMS: frozenset[str] = frozenset({"discord", "telegram", "slack"})
 LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost"})
+
+# Each messenger may only override its endpoint with the canonical host of its own
+# platform (over HTTPS) or an explicit loopback address for local tests.
+_CANONICAL_MESSENGER_HOSTS: dict[str, str] = {
+    "discord": "discord.com",
+    "telegram": "api.telegram.org",
+    "slack": "slack.com",
+}
 
 _AT_PATTERN = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 _ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -98,13 +110,24 @@ _TOP_LEVEL_KEYS: frozenset[str] = frozenset(
         "relays",
         "relay_server",
         "peers",
+        "runner",
+        "codex_sandbox",
     }
 )
 _HOST_KEYS: frozenset[str] = frozenset(
     {"min_memory_percent", "min_disk_gib", "max_lanes", "slot_dir", "heavy_slots"}
 )
 _MESSENGER_KEYS: frozenset[str] = frozenset(
-    {"platform", "token_env", "users", "channels", "cookie_env", "threads", "enabled"}
+    {
+        "platform",
+        "token_env",
+        "users",
+        "channels",
+        "cookie_env",
+        "threads",
+        "enabled",
+        "base_url",
+    }
 )
 _THREAD_KEYS: frozenset[str] = frozenset({"channel_id", "thread_id"})
 _SCHEDULE_KEYS: frozenset[str] = frozenset(
@@ -332,6 +355,32 @@ def _required_platform(table: dict[str, object], key: str, where: str) -> Platfo
             _fail(f"{where}.{key}", "must be one of discord, telegram or slack")
 
 
+def _optional_runner(
+    table: dict[str, object], key: str, where: str, default: RunnerKind
+) -> RunnerKind:
+    if key not in table:
+        return default
+    value = _read_str(table, key, where)
+    match value:
+        case "omo" | "codex" | "claude":
+            return value
+        case _:
+            _fail(f"{where}.{key}", "must be one of omo, codex or claude")
+
+
+def _optional_codex_sandbox(
+    table: dict[str, object], key: str, where: str, default: SandboxMode
+) -> SandboxMode:
+    if key not in table:
+        return default
+    value = _read_str(table, key, where)
+    match value:
+        case "read-only" | "workspace-write":
+            return value
+        case _:
+            _fail(f"{where}.{key}", "must be one of read-only or workspace-write")
+
+
 def _validate_zone(name: str, where: str) -> None:
     try:
         ZoneInfo(name)
@@ -351,6 +400,22 @@ def _validate_peer_url(url: str, where: str) -> str:
     if parts.scheme == "http" and host in LOOPBACK_HOSTS:
         return url
     _fail(where, "must use https, or http only for a loopback host")
+
+
+def _validate_messenger_base_url(url: str, platform: Platform, where: str) -> str:
+    """Accept only the platform's canonical HTTPS host or an explicit loopback HTTP."""
+    parts = urlsplit(url.strip())
+    if parts.username or parts.password or parts.query or parts.fragment:
+        _fail(where, "must not embed credentials, a query or a fragment")
+    host = parts.hostname
+    if not host:
+        _fail(where, "must be an absolute URL with a host")
+    canonical = _CANONICAL_MESSENGER_HOSTS[platform]
+    if parts.scheme == "https" and host == canonical:
+        return url.strip().rstrip("/")
+    if parts.scheme == "http" and host in LOOPBACK_HOSTS:
+        return url.strip().rstrip("/")
+    _fail(where, f"must be https://{canonical} or an http loopback address")
 
 
 def _reject_windows_mount(path: Path) -> None:
@@ -426,6 +491,11 @@ def _parse_messengers(items: list[dict[str, object]], ctx: str) -> tuple[Messeng
             _env_name(cookie_env, f"{where}.cookie_env")
         threads = _parse_threads(table, where)
         enabled = _optional_bool(table, "enabled", where, True)
+        base_url = _optional_str_or_none(
+            table, "base_url", where, max_length=MAX_TEXT_LENGTH, allow_empty=False
+        )
+        if base_url is not None:
+            base_url = _validate_messenger_base_url(base_url, platform, f"{where}.base_url")
         messengers.append(
             MessengerConfig(
                 platform=platform,
@@ -435,6 +505,7 @@ def _parse_messengers(items: list[dict[str, object]], ctx: str) -> tuple[Messeng
                 cookie_env=cookie_env,
                 threads=threads,
                 enabled=enabled,
+                base_url=base_url,
             )
         )
     return tuple(messengers)
@@ -620,6 +691,8 @@ def _parse_config(workspace: Path, data: dict[str, object], source: Path) -> Con
     timeout = _optional_number(data, "timeout_seconds", ctx, 600.0, positive=True)
     poll = _optional_number(data, "poll_seconds", ctx, 3.0, positive=True)
     writing_style = _optional_str(data, "writing_style", ctx, "", allow_empty=True)
+    runner = _optional_runner(data, "runner", ctx, "omo")
+    codex_sandbox = _optional_codex_sandbox(data, "codex_sandbox", ctx, "read-only")
 
     host = _parse_host(data.get("host"), f"{ctx}.host")
     messengers = _parse_messengers(_table_array(data, "messengers", ctx), ctx)
@@ -645,6 +718,8 @@ def _parse_config(workspace: Path, data: dict[str, object], source: Path) -> Con
         host=host,
         relay_server=relay_server,
         peers=peers,
+        runner=runner,
+        codex_sandbox=codex_sandbox,
     )
 
 
@@ -712,6 +787,13 @@ def config_text() -> str:
 # Secrets never appear here; credentials are named environment variables.
 
 command = ["omo"]
+
+# Execution backend: "omo" (default), "codex" or "claude". The installer writes
+# the selected absolute command; legacy files keep the omo default.
+runner = "omo"
+# Codex filesystem sandbox: "read-only" (default) or "workspace-write".
+# codex_sandbox = "read-only"
+
 timeout_seconds = 600.0
 poll_seconds = 3.0
 tools = []
@@ -739,6 +821,9 @@ heavy_slots = 1
 # users = ["1234567890"]
 # channels = ["0987654321"]
 # enabled = true
+# Optional API endpoint override: only the platform's canonical HTTPS host or a
+# loopback HTTP address for local tests.
+# base_url = "https://discord.com/api/v10"
 # [[messengers.threads]]
 # channel_id = "0987654321"
 # thread_id = "1122334455"

@@ -31,6 +31,12 @@ JobStatus: TypeAlias = Literal[
 DeliveryStatus: TypeAlias = Literal["pending", "sending", "sent", "uncertain", "resolved"]
 """Durable outbound delivery states."""
 
+RunnerKind: TypeAlias = Literal["omo", "codex", "claude"]
+"""Agent execution backend; legacy configuration defaults to omo."""
+
+SandboxMode: TypeAlias = Literal["read-only", "workspace-write"]
+"""Codex filesystem sandbox mode; read-only is the fail-closed default."""
+
 JSONValue: TypeAlias = (
     None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 )
@@ -64,6 +70,7 @@ class MessengerConfig:
     cookie_env: str | None = None
     threads: tuple[ThreadRef, ...] = ()
     enabled: bool = True
+    base_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,6 +242,8 @@ class Config:
     host: HostConfig = field(default_factory=HostConfig)
     relay_server: RelayServerConfig | None = None
     peers: tuple[RelayPeer, ...] = ()
+    runner: RunnerKind = "omo"
+    codex_sandbox: SandboxMode = "read-only"
 
     @property
     def state_dir(self) -> Path:

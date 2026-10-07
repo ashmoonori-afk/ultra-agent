@@ -53,6 +53,8 @@ def test_default_template_parses_to_defaults(tmp_path: Path) -> None:
     assert cfg.peers == ()
     assert cfg.relay_server is None
     assert cfg.host == HostConfig()
+    assert cfg.runner == "omo"
+    assert cfg.codex_sandbox == "read-only"
 
 
 def test_init_creates_private_dirs_and_config(tmp_path: Path) -> None:
@@ -114,7 +116,7 @@ def test_embedded_secret_key_rejected(tmp_path: Path) -> None:
 
 def test_arbitrary_endpoint_key_rejected(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="endpoint"):
-        load_config(_write(tmp_path, "[[messengers]]\nplatform = \"discord\"\nbase_url = \"http://x\"\n"))
+        load_config(_write(tmp_path, "[[messengers]]\nplatform = \"discord\"\napi_base = \"http://x\"\n"))
 
 
 def test_command_must_be_string_array(tmp_path: Path) -> None:
@@ -289,6 +291,87 @@ def test_relay_server_bind_must_be_ip(tmp_path: Path) -> None:
 def test_relay_server_port_is_bounded(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="at most"):
         load_config(_write(tmp_path, "[relay_server]\nport = 70000\n"))
+
+
+def test_runner_accepts_all_variants(tmp_path: Path) -> None:
+    for runner in ("omo", "codex", "claude"):
+        cfg = load_config(_write(tmp_path, f'runner = "{runner}"\n'))
+        assert cfg.runner == runner
+
+
+def test_runner_defaults_to_omo_and_rejects_unknown(tmp_path: Path) -> None:
+    assert load_config(_write(tmp_path, config_text())).runner == "omo"
+    with pytest.raises(ConfigError, match="omo, codex or claude"):
+        load_config(_write(tmp_path, 'runner = "gemini"\n'))
+
+
+def test_codex_sandbox_accepts_all_variants(tmp_path: Path) -> None:
+    for sandbox in ("read-only", "workspace-write"):
+        cfg = load_config(_write(tmp_path, f'codex_sandbox = "{sandbox}"\n'))
+        assert cfg.codex_sandbox == sandbox
+
+
+def test_codex_sandbox_defaults_to_read_only_and_rejects_unknown(tmp_path: Path) -> None:
+    assert load_config(_write(tmp_path, config_text())).codex_sandbox == "read-only"
+    with pytest.raises(ConfigError, match="read-only or workspace-write"):
+        load_config(_write(tmp_path, 'codex_sandbox = "danger"\n'))
+
+
+def test_runner_keys_must_be_strings(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="must be a string"):
+        load_config(_write(tmp_path, "runner = 3\n"))
+
+
+def test_messenger_base_url_canonical_and_loopback(tmp_path: Path) -> None:
+    body = (
+        '[[messengers]]\nplatform = "discord"\ntoken_env = "D"\n'
+        'base_url = "https://discord.com/api/v10"\n'
+    )
+    assert load_config(_write(tmp_path, body)).messengers[0].base_url == (
+        "https://discord.com/api/v10"
+    )
+    loopback = (
+        '[[messengers]]\nplatform = "telegram"\ntoken_env = "T"\n'
+        'base_url = "http://127.0.0.1:8080"\n'
+    )
+    assert load_config(_write(tmp_path, loopback)).messengers[0].base_url == (
+        "http://127.0.0.1:8080"
+    )
+
+
+def test_messenger_base_url_defaults_to_none(tmp_path: Path) -> None:
+    body = '[[messengers]]\nplatform = "slack"\ntoken_env = "S"\n'
+    assert load_config(_write(tmp_path, body)).messengers[0].base_url is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.example/api",
+        "http://discord.com/api",
+        "https://discord.com.evil.example",
+        "http://user:pw@127.0.0.1/api",
+        "https://discord.com/api?token=1",
+        "https://discord.com/api#frag",
+        "not-a-url",
+    ],
+)
+def test_messenger_base_url_rejects_unsafe(tmp_path: Path, url: str) -> None:
+    body = (
+        '[[messengers]]\nplatform = "discord"\ntoken_env = "D"\n'
+        f'base_url = "{url}"\n'
+    )
+    with pytest.raises(ConfigError):
+        load_config(_write(tmp_path, body))
+
+
+def test_messenger_base_url_is_platform_specific(tmp_path: Path) -> None:
+    body = (
+        '[[messengers]]\nplatform = "slack"\ntoken_env = "S"\n'
+        'base_url = "https://discord.com/api"\n'
+    )
+    with pytest.raises(ConfigError, match="slack.com"):
+        load_config(_write(tmp_path, body))
 
 
 def test_peer_url_https_or_loopback_http(tmp_path: Path) -> None:

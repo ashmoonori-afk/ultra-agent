@@ -112,6 +112,8 @@ def test_config_defaults_and_derived_paths(tmp_path: Path) -> None:
     assert cfg.messengers == () and cfg.peers == ()
     assert cfg.relay_server is None
     assert isinstance(cfg.host, HostConfig)
+    assert cfg.runner == "omo"
+    assert cfg.codex_sandbox == "read-only"
 
     assert cfg.state_dir == tmp_path / "state"
     assert cfg.work_dir == tmp_path / "work"
@@ -154,6 +156,7 @@ def test_messenger_config_needs_no_credentials() -> None:
     assert msg.cookie_env is None
     assert msg.users == () and msg.channels == () and msg.threads == ()
     assert msg.enabled is True
+    assert msg.base_url is None
 
     thread = ThreadRef(channel_id="c1", thread_id="t1")
     slack = MessengerConfig(
@@ -179,6 +182,7 @@ def test_credential_fields_are_environment_names_only() -> None:
         "cookie_env",
         "threads",
         "enabled",
+        "base_url",
     }
     assert _field_names(RelaySource) == {"name", "platform", "channel", "token_env"}
     assert _field_names(RelayPeer) == {"name", "url", "source", "token_env"}
