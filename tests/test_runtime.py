@@ -10,7 +10,7 @@ import pytest
 
 from ultra_agent.config import init_workspace
 from ultra_agent.host import HeavySlot
-from ultra_agent.models import HostConfig, Schedule, Submission
+from ultra_agent.models import HostConfig, Monitor, Schedule, Submission
 from ultra_agent.runner_lock import RunnerBusy, RunnerLock
 from ultra_agent.runtime import Runtime
 
@@ -154,3 +154,44 @@ def test_lane_cap_does_not_prevent_existing_lane_from_finishing(tmp_path: Path) 
     ))
     runtime.store.enqueue(Submission("one", "finish", approved=True))
     assert runtime.once().job.status == "completed"
+
+
+def _ownership_command(runtime: Runtime, marker: Path) -> tuple[str, ...]:
+    script = (
+        "import os,sys; from pathlib import Path\n"
+        "seen=set()\n"
+        "for fd in os.listdir('/proc/self/fd'):\n"
+        " try: seen.add(os.readlink('/proc/self/fd/'+fd))\n"
+        " except OSError: pass\n"
+        "assert set(sys.argv[1:3]) <= seen\n"
+        "Path(sys.argv[3]).write_text('owned')\n"
+    )
+    return (
+        sys.executable, "-c", script,
+        str(runtime.config.state_dir / "runner.lock"),
+        str(runtime.config.host.slot_dir / "heavy-0.lock"), str(marker),
+    )
+
+
+def test_completion_children_inherit_both_ownership_descriptors(tmp_path: Path) -> None:
+    original = _runtime(tmp_path)
+    marker = tmp_path / "completion-owned"
+    runtime = Runtime(replace(
+        original.config, verification_command=_ownership_command(original, marker),
+    ), clock=lambda: 301)
+    runtime.registry.launch("worker", "worker", "command", cwd=runtime.config.work_dir)
+    runtime.completion.claim("worker", "evidence", 0)
+    assert runtime.close_lane("worker").status == "closed"
+    assert marker.read_text() == "owned"
+
+
+def test_monitor_children_inherit_both_ownership_descriptors(tmp_path: Path) -> None:
+    original = _runtime(tmp_path)
+    marker = tmp_path / "monitor-owned"
+    runtime = Runtime(replace(
+        original.config, monitors=(
+            Monitor("ownership", command=_ownership_command(original, marker), emit_initial=True),
+        ),
+    ))
+    assert runtime.once().enqueued
+    assert marker.read_text() == "owned"

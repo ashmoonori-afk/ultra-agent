@@ -13,7 +13,7 @@ from ultra_agent.automation import tick_monitors, tick_relays, tick_schedules
 from ultra_agent.completion import Completion
 from ultra_agent.driver import run_turn, run_verification
 from ultra_agent.handoff import write_handoff
-from ultra_agent.host import HeavySlot, can_launch, sample_host
+from ultra_agent.host import HeavySlot, SlotUnavailable, can_launch, sample_host
 from ultra_agent.memory import Memory
 from ultra_agent.messenger import Messenger
 from ultra_agent.models import DEFAULT_LANE, Config, Job
@@ -73,6 +73,22 @@ class Runtime:
             self.store.recover_interrupted()
             return self._rotate(self.registry.get(key), reason)
 
+    def close_lane(self, key: str) -> Lane:
+        """Completion commands use the same ownership policy as agent turns."""
+        with self.lock:
+            decision = can_launch(
+                sample_host(self.config, len(self.registry.list(open_only=True))),
+                replace(self.config.host, max_lanes=0),
+            )
+            if not decision.ok:
+                raise SlotUnavailable("host HOLD: " + "; ".join(decision.reasons))
+            with HeavySlot(self.config.host) as slot:
+                completion = Completion(
+                    self.config, self.store, self.registry,
+                    pass_fds=(self.lock.fileno(), slot.fileno()),
+                )
+                return completion.close(key, self.clock())
+
     def _rotate(self, lane: Lane, reason: str) -> Path:
         path = write_handoff(self.config, self.store, lane, reason)
         self.registry.rotate(lane.key, str(uuid.uuid4()), self.clock(), f"handoff: {path}")
@@ -101,8 +117,14 @@ class Runtime:
                 hold=("host heavy slot is busy or unavailable",),
             )
         try:
-            enqueued.extend(tick_monitors(self.config, self.store, now))
-            lanes = tuple(self.completion.tick(now))
+            descriptors = (self.lock.fileno(), slot.fileno())
+            enqueued.extend(tick_monitors(
+                self.config, self.store, now, pass_fds=descriptors,
+            ))
+            completion = Completion(
+                self.config, self.store, self.registry, pass_fds=descriptors,
+            )
+            lanes = tuple(completion.tick(now))
             job = self.store.claim()
             handoff: Path | None = None
             if job is not None:

@@ -94,6 +94,7 @@ def _resolve(config: Config, path: Path) -> Path:
 def run_probe(
     command: Sequence[str], timeout_seconds: float, env: Mapping[str, str] | None = None,
     *, cwd: Path | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> ProbeResult:
     """Run a fixed argv with a deadline in its own process group, no shell.
 
@@ -106,7 +107,9 @@ def run_probe(
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise ValueError("probe timeout must be positive and finite")
     child_env = None if env is None else dict(env)
-    result = run_command(tuple(command), cwd or Path.cwd(), timeout_seconds, child_env)
+    result = run_command(
+        tuple(command), cwd or Path.cwd(), timeout_seconds, child_env, pass_fds=pass_fds,
+    )
     timed_out = result.error == "Command timed out"
     exit_code = result.exit_code
     if timed_out or (not result.success and exit_code == 0):
@@ -254,7 +257,9 @@ def _tick_daily_schedule(schedule: Schedule, store: Store, now: float) -> str | 
     return _emit(store, submission, (cursor_key, due_text))
 
 
-def tick_monitors(config: Config, store: Store, now: float) -> list[str]:
+def tick_monitors(
+    config: Config, store: Store, now: float, *, pass_fds: tuple[int, ...] = (),
+) -> list[str]:
     """Enqueue one event for each monitor whose observation changed.
 
     ``now`` is accepted for a uniform tick signature and is otherwise unused:
@@ -273,7 +278,8 @@ def tick_monitors(config: Config, store: Store, now: float) -> list[str]:
             if env is None:
                 env = child_environment(config)
             result = run_probe(
-                monitor.command, monitor.timeout_seconds, env, cwd=config.workspace
+                monitor.command, monitor.timeout_seconds, env, cwd=config.workspace,
+                pass_fds=pass_fds,
             )
             fingerprint, description, failure = _command_observation(monitor.command, result)
         else:

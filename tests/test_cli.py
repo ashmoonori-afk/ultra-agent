@@ -158,6 +158,28 @@ def test_host_can_launch_reports_occupied_slot(
     assert _out(capsys)["decision"] == "HOLD"
 
 
+def test_lane_close_does_not_launch_checks_while_heavy_slot_busy(tmp_path, capsys):
+    from dataclasses import replace
+
+    from ultra_agent.host import HeavySlot
+
+    ws = _write_workspace(tmp_path)
+    config = replace(
+        load_config(ws), verification_command=(sys.executable, "-c", "print('checked')"),
+    )
+    runtime = Runtime(config, clock=lambda: 301)
+    runtime.registry.launch("worker", "worker", "command", cwd=config.work_dir)
+    runtime.completion.claim("worker", "claimed", 0)
+    with HeavySlot(config.host):
+        code = main(
+            ["--workspace", str(ws), "lane", "close", "worker"],
+            runtime_factory=lambda _: runtime,
+        )
+    assert code == 1
+    assert runtime.registry.get("worker").status == "done-claimed"
+    assert _out(capsys)["ok"] is False
+
+
 def test_init_memory_and_status_roundtrip(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

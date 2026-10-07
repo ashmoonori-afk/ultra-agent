@@ -35,7 +35,7 @@ from typing import Final, TypeAlias, TypeGuard
 from ultra_agent import service
 from ultra_agent.completion import SignalError, parse_signals
 from ultra_agent.config import ConfigError, init_workspace, load_config
-from ultra_agent.host import HeavySlot, HostSample, can_launch, sample_host
+from ultra_agent.host import HeavySlot, HostSample, SlotUnavailable, can_launch, sample_host
 from ultra_agent.http import TransportError
 from ultra_agent.messenger import CapabilityError, MessengerError
 from ultra_agent.models import (
@@ -565,7 +565,8 @@ def _watch_snapshot(runtime: Runtime, key: str | None) -> dict[str, JSONValue]:
 
 def _cmd_lane_close(args: argparse.Namespace, factory: RuntimeFactory) -> int:
     runtime = _runtime(args, factory)
-    lane = runtime.completion.close(str(args.key), runtime.clock())
+    with _signal_stop(threading.Event()):
+        lane = runtime.close_lane(str(args.key))
     closed = lane.status == "closed"
     _emit({"ok": closed, "lane": _lane_json(lane)})
     return 0 if closed else 1
@@ -1050,6 +1051,7 @@ def main(
         RelayError,
         ServiceError,
         RunnerBusy,
+        SlotUnavailable,
         TransportError,
         OSError,
         ValueError,

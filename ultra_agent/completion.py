@@ -177,12 +177,14 @@ class Completion:
         *,
         client: HttpClient | None = None,
         npm_registry: str = NPM_REGISTRY_URL,
+        pass_fds: tuple[int, ...] = (),
     ) -> None:
         self._config = config
         self._store = store
         self._registry = registry
         self._client = client if client is not None else HttpClient()
         self._npm_registry = npm_registry.rstrip("/")
+        self._pass_fds = pass_fds
 
     def claim(self, key: str, evidence: str, now: float) -> Lane:
         """Open the fixed 300-second objection window; never extend on retry."""
@@ -387,6 +389,7 @@ class Completion:
             lane.cwd if cwd is None else cwd,
             self._config.timeout_seconds,
             child_environment(self._config),
+            pass_fds=self._pass_fds,
         )
 
 
