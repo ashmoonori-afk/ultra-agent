@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ultra-agent"
 version = "0.1.0"
 description = "A small, locally operated omo agent runtime with durable memory, approvals and delivery."
+readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE", "NOTICE"]

@@ -1,0 +1,128 @@
+# ultra-agent example configuration.
+#
+# Copy this file to <workspace>/ultra-agent.toml and edit it. Exactly one TOML
+# file configures everything; parsing is strict and unknown keys are rejected.
+#
+# Credentials are NEVER stored here. Each messenger names an environment
+# variable that holds its secret (token_env / cookie_env). Export the variable
+# before running the command; the value never appears in this file, in status
+# output or in the environment passed to the agent.
+#
+# The active keys below are the safe defaults. Every optional section is
+# COMMENTED so this file loads with no credentials and no network access.
+
+command = ["omo"]
+timeout_seconds = 600.0
+poll_seconds = 3.0
+tools = []                 # empty => the agent runs with --no-tools
+verification_command = []  # fixed argv run after a successful turn; empty disables it
+writing_style = ""         # free-form style guidance; empty adds nothing to the prompt
+
+# Optional: an explicit model name passed to the agent command.
+# model = "example-model"
+
+# --- Host guard and shared heavy slot -------------------------------------
+# Defaults are shown; adjust for the machine.
+#
+# [host]
+# min_memory_percent = 20.0
+# min_disk_gib = 1.0
+# max_lanes = 20            # 0 disables the active-lane cap
+# heavy_slots = 1
+# slot_dir = "~/.local/state/ultra-agent/slots"
+
+# --- Messengers (disabled by default) -------------------------------------
+# One [[messengers]] block per platform. `users` and `channels` are strict
+# allowlists; only configured senders and channels enqueue work. Slack may also
+# declare a cookie_env for its user-session presence socket (unofficial API).
+#
+# [[messengers]]
+# platform = "discord"
+# token_env = "DISCORD_TOKEN"
+# users = ["DISCORD_USER_ID"]
+# channels = ["DISCORD_CHANNEL_ID"]
+# enabled = true
+#
+# [[messengers]]
+# platform = "telegram"
+# token_env = "TELEGRAM_TOKEN"
+# users = ["TELEGRAM_USER_ID"]
+# channels = ["TELEGRAM_CHAT_ID"]
+# enabled = true
+#
+# [[messengers]]
+# platform = "slack"
+# token_env = "SLACK_TOKEN"
+# cookie_env = "SLACK_COOKIE"
+# users = ["SLACK_USER_ID"]
+# channels = ["SLACK_CHANNEL_ID"]
+# enabled = true
+# # Tracked threads accept replies without a bot mention.
+# [[messengers.threads]]
+# channel_id = "SLACK_CHANNEL_ID"
+# thread_id = "THREAD_TIMESTAMP"
+
+# --- Schedules -------------------------------------------------------------
+# Define either every_seconds (interval) or at + timezone (daily), not both.
+# trusted = true preapproves the occurrence; the default awaits approval.
+#
+# [[schedules]]
+# name = "interval-job"
+# prompt = "Summarize open work."
+# every_seconds = 3600
+# trusted = false
+# lane = "default"
+#
+# [[schedules]]
+# name = "daily-job"
+# prompt = "Write the daily note."
+# at = "09:00"
+# timezone = "UTC"
+
+# --- Monitors --------------------------------------------------------------
+# Define either path (content fingerprint) or command (fixed argv, no shell).
+# The first observation establishes a baseline unless emit_initial = true.
+#
+# [[monitors]]
+# name = "app-log"
+# path = "work/status.log"
+# emit_initial = false
+# trusted = false
+# lane = "default"
+#
+# [[monitors]]
+# name = "disk-check"
+# command = ["/usr/bin/df", "-h"]
+# timeout_seconds = 60.0
+
+# --- Status-file relay (outbound to a local messenger target) --------------
+# Only complete PROGRESS/QUESTION lines are relayed, with a durable byte offset.
+#
+# [[relays]]
+# name = "progress"
+# path = "work/status.log"
+# platform = "discord"
+# channel = "DISCORD_CHANNEL_ID"
+
+# --- Relay server (opt-in; receives status from other machines) ------------
+# Each source authenticates with its own bearer secret from token_env.
+# Non-loopback clients must use HTTPS.
+#
+# [relay_server]
+# bind = "127.0.0.1"
+# port = 8765
+#
+# [[relay_server.sources]]
+# name = "laptop"
+# platform = "discord"
+# channel = "DISCORD_CHANNEL_ID"
+# token_env = "RELAY_LAPTOP_TOKEN"
+
+# --- Outbound peer (push local status lines to another machine) ------------
+# https, or http only for a loopback host.
+#
+# [[peers]]
+# name = "laptop"
+# url = "https://relay.example.invalid:8765"
+# source = "desktop"
+# token_env = "RELAY_DESKTOP_TOKEN"
