@@ -225,6 +225,29 @@ def test_rotation_updates_both_bindings_without_replaying_uncertain_work(tmp_pat
     assert store.claim() is None
 
 
+def test_sync_rechecks_claim_state_in_its_write_transaction(tmp_path, monkeypatch):
+    from ultra_agent import registry as module
+
+    registry, store, config = _registry(tmp_path)
+    original = registry.launch(LANE, "worker", "done")
+    path = _write_session(config.sessions_dir / "owned.jsonl", original.session_id)
+    registry.adopt(LANE, path)
+    identifier = store.enqueue(Submission("queued", "work", approved=True, lane=LANE))
+    changed = "11111111-2222-4333-8444-555555555555"
+    _write_session(path, changed)
+    read_header = module._read_header_or_none
+
+    def interleaved(path):
+        store.claim()
+        return read_header(path)
+
+    monkeypatch.setattr(module, "_read_header_or_none", interleaved)
+    report = registry.sync(write=True)
+    assert report.repairs == ()
+    assert store.get_job(identifier).status == "running"
+    assert registry.get(LANE).session_id == original.session_id
+
+
 def test_objection_sets_not_done_and_clears_claim(tmp_path: Path) -> None:
     registry, _, _ = _registry(tmp_path)
     registry.launch(LANE, "worker", "done")

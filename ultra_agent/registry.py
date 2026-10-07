@@ -764,6 +764,11 @@ class Registry:
             current = self._require(connection, lane.key)
             if current.revision != lane.revision:
                 return None
+            if connection.execute(
+                "SELECT id FROM jobs WHERE lane = ? "
+                "AND status IN ('running', 'uncertain') LIMIT 1", (lane.key,),
+            ).fetchone() is not None:
+                return None
             updated = replace(
                 current, session_id=session_id, session_file=path,
                 revision=current.revision + 1,
