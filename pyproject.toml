@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ultra-agent"
+version = "0.1.0"
+description = "A small, locally operated omo agent runtime with durable memory, approvals and delivery."
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+classifiers = [
+    "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+dependencies = [
+    "birkin-mnemosyne==0.4.0",
+    "websocket-client>=1.8,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "basedpyright",
+    "build",
+    "websockets>=15,<17",
+]
+
+[project.scripts]
+ultra-agent = "ultra_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ultra_agent*"]
+
+[tool.setuptools.package-data]
+ultra_agent = ["skills/**/*.md", "py.typed"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.basedpyright]
+include = ["ultra_agent"]
+typeCheckingMode = "strict"

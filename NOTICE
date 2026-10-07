@@ -1,0 +1,71 @@
+ultra-agent
+Copyright (c) 2026 ultra-agent contributors
+Licensed under the MIT License; see LICENSE.
+
+This file records third-party attribution. ultra-agent depends on
+birkin-mnemosyne and behaviorally adapts ideas from omo-dori-mode-experimental.
+Neither upstream application is bundled or redistributed: only the required
+dependency is installed by the user, and the Dori-mode entry below is a
+behavioral adaptation, not copied source. Both works are MIT-licensed and their
+full license texts are reproduced verbatim below.
+
+================================================================================
+birkin-mnemosyne (Mnemosyne)
+Source: https://github.com/ashmoonori-afk/birkin-mnemosyne
+Revision: f69bfef2bc2489301a14c5fcff51c9018565bd7f (version 0.4.0)
+Use: runtime dependency; VaultMemory is imported directly. Not vendored.
+License: MIT
+--------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2026 ashmoonori
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+omo-dori-mode-experimental (Dori-mode)
+Source: https://github.com/ashmoonori-afk/omo-dori-mode-experimental
+Revision: 742f09df4cca2816cda275ec2de9b2acf95272e2
+Use: behavioral adaptation only. ultra-agent independently reimplements the
+lane registry, synchronization, timed objection and live verification, host
+guard and unified messenger behavior. No upstream source files
+are copied, and the full application is not bundled or redistributed.
+License: MIT
+--------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2026 YeonGyu Kim
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

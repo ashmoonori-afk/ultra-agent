@@ -1,0 +1,58 @@
+# Operator runtime workspace at the repo root (never commit live state).
+# Root-anchored so a source or test fixture named the same is never excluded.
+/ultra-agent.toml
+/state/
+/vault/
+/work/
+/sessions/
+/handoffs/
+
+# Runtime state, logs and databases anywhere in the workspace
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+
+# Private orchestration metadata
+.omo/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Temporary outputs
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+*.rej
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.whl
+*.tar.gz
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.basedpyright/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Editor and OS noise
+.DS_Store
