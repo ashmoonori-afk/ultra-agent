@@ -768,9 +768,11 @@ class Store:
                 ordinal=ordinal,
             )
 
-    def get_checkpoint(self, key: str) -> str | None:
+    def get_checkpoint(
+        self, key: str, *, transaction: sqlite3.Connection | None = None
+    ) -> str | None:
         """Return the durable cursor value for ``key``, or ``None``."""
-        with self._read() as connection:
+        with (self._read() if transaction is None else nullcontext(transaction)) as connection:
             row = self._one(
                 connection, "SELECT value FROM checkpoints WHERE key = ?", (key,)
             )
