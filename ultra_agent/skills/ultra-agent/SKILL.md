@@ -1,14 +1,20 @@
 ---
 name: ultra-agent
-description: Operate and supervise an ultra-agent workspace from a terminal - install, init, memory, approval queue, once/status, lanes, live Done checks, host guard, messengers, schedules, relay and service. Use when running the ultra-agent CLI or interpreting its durable state.
+description: Operate and supervise an ultra-agent workspace from a terminal - one-command setup, init, memory, approval queue, once/status, lanes, live Done checks, host guard, messengers, schedules, relay and service, on a Codex CLI, Claude Code or omo backend. Use when running the ultra-agent CLI or interpreting its durable state.
 ---
 
 # ultra-agent operator skill
 
-ultra-agent keeps an existing `omo` login useful after a chat window closes. It
-adds durable memory, an approval queue, session continuity, lanes, a host guard,
-three messengers, automation and status relay around the `omo` CLI. It is not a
-model platform and does not replace `omo`.
+ultra-agent keeps an existing Codex CLI, Claude Code or omo login useful after a
+chat window closes (`runner` in the workspace TOML). It adds durable memory, an
+approval queue, session continuity, lanes, a host guard, three messengers,
+automation and status relay around that CLI. It is not a model platform and
+does not replace the CLI or its login.
+
+First-time setup is one command (`install.sh | bash`, or `ultra-agent
+--workspace <PATH> setup` when already installed). It never reads provider
+credential files; a missing login is reported with the exact login command.
+`ultra-agent --workspace <PATH> stop` stops a background agent started by setup.
 
 ## When to use
 

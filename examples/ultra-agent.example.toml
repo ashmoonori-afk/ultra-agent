@@ -11,10 +11,13 @@
 # The active keys below are the safe defaults. Every optional section is
 # COMMENTED so this file loads with no credentials and no network access.
 
-command = ["omo"]
+command = ["omo"]         # absolute path of the agent CLI; setup writes it for you
+runner = "omo"            # "omo", "codex" or "claude"
+# codex_sandbox = "read-only"   # Codex only: "read-only" or "workspace-write"
 timeout_seconds = 600.0
 poll_seconds = 3.0
-tools = []                 # empty => the agent runs with --no-tools
+tools = []                 # empty => no tools (omo --no-tools; Codex shell/web/MCP off;
+                           # Claude built-in tools and MCP off). Codex accepts only ["native"]
 verification_command = []  # fixed argv run after a successful turn; empty disables it
 writing_style = ""         # free-form style guidance; empty adds nothing to the prompt
 
