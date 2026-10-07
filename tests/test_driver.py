@@ -57,6 +57,7 @@ def test_turn_argv_stdin_and_environment(tmp_path: Path, monkeypatch: pytest.Mon
     excluded = (
         "TEST_DISCORD", "TEST_TELEGRAM", "TEST_SLACK", "TEST_COOKIE", "TEST_PEER",
         "TEST_SOURCE", "PI_SESSION_ID", "PI_SESSION_FILE", "PI_SESSION_CWD", "PI_GOAL_STORE_FILE",
+        "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "NOTIFY_SOCKET",
     )
     for name in excluded:
         monkeypatch.setenv(name, "fixture-value")
@@ -229,6 +230,19 @@ def test_cancellation_reaps_leader_and_kills_child(
             assert selector.select(timeout=5)
     finally:
         os.close(child_fd)
+
+
+def test_public_process_boundary_runs_fixed_argv(tmp_path: Path) -> None:
+    from ultra_agent.process import run_process
+
+    result = run_process(
+        (sys.executable, str(FIXTURE), "command", "$(literal)"),
+        tmp_path, 5, None, b"payload",
+    )
+    assert result.success, result.error
+    report = json.loads(result.text)
+    assert report["argv"] == ["$(literal)"]
+    assert report["cwd"] == str(tmp_path)
 
 
 def test_command_errors_are_typed_and_bounded(tmp_path: Path) -> None:

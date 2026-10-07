@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import uuid
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ from ultra_agent.registry import (
     RegistryError,
     SyncReport,
 )
+from ultra_agent.runner_state import save_session, session_path
 from ultra_agent.store import Store
 
 LANE = "lane-a"
@@ -496,3 +498,92 @@ def test_sync_reports_missing_done_criteria(tmp_path: Path) -> None:
     report = registry.sync()
     missing_done = [f for f in report.findings if f.kind == "missing-done"]
     assert [f.key for f in missing_done] == ["legacy-lane"]
+
+
+def _descriptor(path: Path, *, local_id: str, runner: str = "codex",
+                native_id: str | None = None, version: int = 1) -> Path:
+    header = {
+        "type": "session", "id": local_id, "runner": runner,
+        "native_session_id": native_id or str(uuid.uuid4()), "version": version,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(header) + "\n", encoding="utf-8")
+    return path
+
+
+def test_sync_accepts_codex_and_claude_descriptors_without_uuid_drift(
+    tmp_path: Path,
+) -> None:
+    registry, _, config = _registry(tmp_path)
+    codex = registry.launch(LANE, "worker", "done")
+    claude = registry.launch(OTHER, "reviewer", "other done")
+    codex_path = save_session(config, codex.session_id, "codex", str(uuid.uuid4()))
+    claude_path = save_session(config, claude.session_id, "claude", str(uuid.uuid4()))
+
+    report = registry.sync(write=True)
+    assert report.findings == ()
+    assert registry.get(LANE).session_id == codex.session_id
+    assert registry.get(OTHER).session_id == claude.session_id
+    assert registry.get(LANE).session_file == codex_path
+    assert registry.get(OTHER).session_file == claude_path
+
+    reopened = Registry(Store(config.db_path), config)
+    again = reopened.sync()
+    assert again.findings == ()
+    assert reopened.get(LANE).session_id == codex.session_id
+    assert reopened.get(OTHER).session_id == claude.session_id
+
+
+def test_sync_keeps_existing_omo_header_valid(tmp_path: Path) -> None:
+    registry, _, config = _registry(tmp_path)
+    lane = registry.launch(LANE, "worker", "done")
+    omo_header = json.dumps({
+        "type": "session", "version": 3, "id": lane.session_id,
+        "timestamp": "2024-12-03T14:00:00.000Z", "cwd": "/tmp/project",
+    })
+    (config.sessions_dir / f"timestamp_{lane.session_id}.jsonl").write_text(
+        omo_header + "\n", encoding="utf-8"
+    )
+    report = registry.sync(write=True)
+    assert report.findings == ()
+    assert registry.get(LANE).session_id == lane.session_id
+
+
+def test_sync_reports_malformed_descriptor_without_repair(tmp_path: Path) -> None:
+    registry, _, config = _registry(tmp_path)
+    lane = registry.launch(LANE, "worker", "done")
+    _descriptor(session_path(config, lane.session_id), local_id=lane.session_id, runner="bogus")
+
+    report = registry.sync(write=True)
+    changed = [f for f in report.findings if f.kind == "changed-header"]
+    assert [f.key for f in changed] == [LANE]
+    assert report.repairs == ()
+    assert registry.get(LANE).session_id == lane.session_id
+    assert registry.get(LANE).session_file is None
+
+
+def test_sync_refuses_descriptor_that_would_change_local_uuid(tmp_path: Path) -> None:
+    registry, _, config = _registry(tmp_path)
+    lane = registry.launch(LANE, "worker", "done")
+    foreign = str(uuid.uuid4())
+    _descriptor(session_path(config, lane.session_id), local_id=foreign)
+
+    report = registry.sync(write=True)
+    assert any(f.kind == "changed-header" and f.key == LANE for f in report.findings)
+    assert report.repairs == ()
+    assert registry.get(LANE).session_id == lane.session_id
+
+
+def test_sync_descriptor_binding_refused_while_job_running(tmp_path: Path) -> None:
+    registry, store, config = _registry(tmp_path)
+    lane = registry.launch(LANE, "worker", "done")
+    save_session(config, lane.session_id, "codex", str(uuid.uuid4()))
+    store.enqueue(Submission(source_key="j", prompt="run", approved=True, lane=LANE))
+    assert store.claim() is not None
+
+    report = registry.sync(write=True)
+    assert report.repairs == ()
+    updated = registry.get(LANE)
+    assert updated.session_file is None
+    assert updated.session_id == lane.session_id
+    assert updated.revision == lane.revision

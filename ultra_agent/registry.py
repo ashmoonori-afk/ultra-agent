@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Literal, TypeAlias, TypeGuard
 
 from ultra_agent.models import Config, Job
+from ultra_agent.runner_state import SessionStateError, parse_descriptor
 from ultra_agent.store import Store
 
 LaneStatus: TypeAlias = Literal[
@@ -251,8 +252,21 @@ def _row_to_event(row: Mapping[str, object]) -> LaneEvent:
     )
 
 
-def _read_header(path: Path) -> str:
-    """Return the session id from a JSONL file's first (header) line."""
+@dataclass(frozen=True, slots=True)
+class SessionHeader:
+    """A validated session header plus whether it is a native descriptor."""
+
+    session_id: str
+    descriptor: bool
+
+
+def _read_header(path: Path) -> SessionHeader:
+    """Return the validated session id and descriptor flag from the header line.
+
+    A header that carries a native-session descriptor extension is validated
+    against :func:`parse_descriptor`; a malformed one is refused. An ordinary
+    native provider session header is accepted unchanged.
+    """
     if not path.is_file():
         raise RegistryError(f"session file does not exist: {path}")
     try:
@@ -276,10 +290,14 @@ def _read_header(path: Path) -> str:
     session_id = header.get("id")
     if not isinstance(session_id, str) or not session_id:
         raise RegistryError(f"session file header has no id: {path}")
-    return session_id
+    try:
+        descriptor = parse_descriptor(header) is not None
+    except SessionStateError as exc:
+        raise RegistryError(f"session descriptor is invalid in {path}: {exc}") from exc
+    return SessionHeader(session_id=session_id, descriptor=descriptor)
 
 
-def _read_header_or_none(path: Path) -> str | None:
+def _read_header_or_none(path: Path) -> SessionHeader | None:
     try:
         return _read_header(path)
     except RegistryError:
@@ -411,14 +429,17 @@ class Registry:
             ).fetchone() is not None:
                 raise RegistryError("lane execution must be reconciled before adoption")
             other: dict[str, object] | None = connection.execute(
-                "SELECT key FROM lanes WHERE session_id = ? AND key <> ?", (header, key)
+                "SELECT key FROM lanes WHERE session_id = ? AND key <> ?",
+                (header.session_id, key),
             ).fetchone()
             if other is not None:
                 raise RegistryError(
-                    f"session {header!r} is already bound to lane {_text(other.get('key'))!r}"
+                    f"session {header.session_id!r} is already bound to lane "
+                    f"{_text(other.get('key'))!r}"
                 )
             updated = replace(
-                lane, session_id=header, session_file=path, revision=lane.revision + 1
+                lane, session_id=header.session_id, session_file=path,
+                revision=lane.revision + 1,
             )
             self._write_lane(connection, updated)
             _insert_history(
@@ -641,11 +662,13 @@ class Registry:
         scanned = tuple(sorted(set(_scan(sessions_dir)) | {
             lane.session_file for lane in lanes if lane.session_file is not None
         }))
-        headers: dict[Path, str | None] = {path: _read_header_or_none(path) for path in scanned}
+        headers: dict[Path, SessionHeader | None] = {
+            path: _read_header_or_none(path) for path in scanned
+        }
         counts: dict[str, int] = {}
-        for session_id in headers.values():
-            if session_id is not None:
-                counts[session_id] = counts.get(session_id, 0) + 1
+        for header in headers.values():
+            if header is not None:
+                counts[header.session_id] = counts.get(header.session_id, 0) + 1
         lane_ids = {lane.session_id for lane in lanes}
 
         findings: list[SyncFinding] = []
@@ -657,7 +680,10 @@ class Registry:
                 findings.append(
                     SyncFinding("missing-done", lane.key, None, "lane has no Done criteria")
                 )
-            matches = [path for path, value in headers.items() if value == lane.session_id]
+            matches = [
+                path for path, value in headers.items()
+                if value is not None and value.session_id == lane.session_id
+            ]
             if lane.session_file is None and len(matches) > 1:
                 findings.append(SyncFinding(
                     "changed-header", lane.key, None, "multiple files claim this session id"
@@ -688,10 +714,10 @@ class Registry:
                         )
                     )
                 continue
-            session_id = headers.get(resolved)
-            if session_id is None:
-                session_id = _read_header_or_none(resolved)
-            if session_id is None:
+            header = headers.get(resolved)
+            if header is None:
+                header = _read_header_or_none(resolved)
+            if header is None:
                 findings.append(
                     SyncFinding(
                         "changed-header",
@@ -701,6 +727,7 @@ class Registry:
                     )
                 )
                 continue
+            session_id = header.session_id
             if session_id != lane.session_id:
                 findings.append(
                     SyncFinding(
@@ -711,7 +738,7 @@ class Registry:
                     )
                 )
             if write and (session_id != lane.session_id or lane.session_file is None):
-                repair = self._repair(lane, resolved, session_id, counts, lane_ids, jobs)
+                repair = self._repair(lane, resolved, header, counts, lane_ids, jobs)
                 if repair is not None:
                     repairs.append(repair)
                     lane_ids.discard(lane.session_id)
@@ -720,8 +747,8 @@ class Registry:
         for path in scanned:
             if path in registered:
                 continue
-            session_id = headers.get(path)
-            if session_id is not None and session_id in lane_ids:
+            header = headers.get(path)
+            if header is not None and header.session_id in lane_ids:
                 continue
             findings.append(
                 SyncFinding(
@@ -743,11 +770,16 @@ class Registry:
         self,
         lane: Lane,
         path: Path,
-        session_id: str,
+        header: SessionHeader,
         counts: Mapping[str, int],
         lane_ids: set[str],
         jobs: Sequence[Job],
     ) -> SyncRepair | None:
+        session_id = header.session_id
+        if header.descriptor and session_id != lane.session_id:
+            # A descriptor's id is its owning lane UUID; never rebind the stable
+            # local UUID from a foreign native descriptor.
+            return None
         if lane.session_file is not None and Path(lane.session_file) != path:
             return None
         if counts.get(session_id, 0) != 1:
