@@ -1,0 +1,21 @@
+# Generic systemd user unit for ultra-agent. Copy it into
+# ~/.config/systemd/user/ and adjust the workspace path for the host.
+#
+# %h expands to the operator's home directory. Nothing here contains a
+# credential: secrets live only in the operator-owned, optional EnvironmentFile.
+
+[Unit]
+Description=ultra-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/ultra-agent/state/service.env
+ExecStart=%h/.local/bin/ultra-agent --workspace %h/ultra-agent run
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
