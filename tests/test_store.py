@@ -369,3 +369,14 @@ def test_definite_rate_limit_wait_survives_restart(tmp_path: Path) -> None:
     reopened = Store(_db(tmp_path))
     assert reopened.start_delivery(delivery, now=19) is False
     assert reopened.start_delivery(delivery, now=20) is True
+
+
+def test_relay_delivery_and_cursor_share_one_transaction(tmp_path: Path) -> None:
+    store = Store(_db(tmp_path))
+    with pytest.raises(RuntimeError):
+        with store.connection() as transaction:
+            store.add_delivery("slack", "C1", "notice", transaction=transaction)
+            store.set_checkpoint("relay:source", "1", transaction=transaction)
+            raise RuntimeError("interrupted before commit")
+    assert store.deliveries() == []
+    assert store.get_checkpoint("relay:source") is None

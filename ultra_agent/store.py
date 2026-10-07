@@ -28,7 +28,7 @@ import sqlite3
 import time
 import uuid
 from collections.abc import Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import TypeAlias
 
@@ -624,6 +624,8 @@ class Store:
         job_id: str | None = None,
         source_key: str | None = None,
         thread_id: str | None = None,
+        *,
+        transaction: sqlite3.Connection | None = None,
     ) -> str:
         """Append one pending outbound chunk, for the relay or an adapter.
 
@@ -633,7 +635,7 @@ class Store:
         """
         if not channel.strip():
             raise ValueError("delivery requires a non-empty channel")
-        with self.connection() as connection:
+        with (self.connection() if transaction is None else nullcontext(transaction)) as connection:
             if source_key is not None:
                 existing = self._one(
                     connection,
@@ -774,9 +776,11 @@ class Store:
             )
         return _as_opt_str(row.get("value")) if row is not None else None
 
-    def set_checkpoint(self, key: str, value: str) -> None:
+    def set_checkpoint(
+        self, key: str, value: str, *, transaction: sqlite3.Connection | None = None
+    ) -> None:
         """Persist a durable cursor value."""
-        with self.connection() as connection:
+        with (self.connection() if transaction is None else nullcontext(transaction)) as connection:
             self._write_checkpoint(connection, key, value)
 
     @staticmethod
