@@ -222,10 +222,25 @@ def test_operator_configuration_is_never_overwritten(tmp_path: Path) -> None:
         'channels = ["c"]\n'
     )
     (workspace / "ultra-agent.toml").write_text(custom, encoding="utf-8")
-    write_setup(workspace, _inputs(), "codex", tmp_path / "agent")
+    write_setup(workspace, _inputs(platform="slack"), "codex", tmp_path / "agent")
     assert (workspace / "ultra-agent.toml").read_text(encoding="utf-8") == custom
     values = startup.load_service_env(load_config(workspace))
-    assert values == {"ULTRA_AGENT_DISCORD_TOKEN": _TOKEN}
+    assert values == {"SLACK_TOKEN": _TOKEN}
+
+
+def test_rerun_stores_token_under_the_configured_messenger_name(tmp_path: Path) -> None:
+    # Given a configured discord workspace whose stored token was removed.
+    executable = Path("/usr/bin/true")
+    config = write_setup(tmp_path, _inputs(), "codex", executable)
+    (config.state_dir / "service.env").unlink()
+    # When a rerun names a different platform, then it is refused, not misfiled.
+    with pytest.raises(SetupConfigError):
+        write_setup(tmp_path, _inputs(platform="telegram"), "codex", executable)
+    assert not (config.state_dir / "service.env").exists()
+    # And a matching rerun restores the token under the configured variable.
+    write_setup(tmp_path, _inputs(), "codex", executable)
+    stored = startup.load_service_env(load_config(config.workspace))
+    assert stored == {config.messengers[0].token_env: _TOKEN}
 
 
 def test_loopback_api_base_accepted(tmp_path: Path) -> None:

@@ -192,7 +192,15 @@ def write_setup(
     if not config.messengers and config.runner == "omo":
         _replace_atomic(config.config_path, _render(inputs, runner, command))
         config = load_config(config.workspace)
-    _ensure_token(config, _token_env(inputs.platform), inputs.token)
+    matching = [m for m in config.messengers if m.platform == inputs.platform]
+    if config.messengers and not matching:
+        configured = ", ".join(sorted({m.platform for m in config.messengers}))
+        raise SetupConfigError(
+            f"workspace is already configured for {configured}; "
+            f"set {_PLATFORM_ENV} to match it"
+        )
+    name = matching[0].token_env if matching else _token_env(inputs.platform)
+    _ensure_token(config, name, inputs.token)
     return config
 
 
