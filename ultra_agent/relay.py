@@ -44,6 +44,7 @@ from urllib.parse import urlsplit
 from ultra_agent.config import LOOPBACK_HOSTS
 from ultra_agent.http import HttpClient
 from ultra_agent.models import Config, JSONValue, RelayPeer, RelaySource
+from ultra_agent.runner_lock import RunnerLock
 from ultra_agent.store import Store
 
 STATUS_PATH = "/v1/status"
@@ -451,10 +452,14 @@ def _load_cursor(store: Store, key: str) -> _Cursor:
         return _Cursor(0, 0, 0)
     try:
         decoded: object = json.loads(raw)
-    except (json.JSONDecodeError, RecursionError):
-        return _Cursor(0, 0, 0)
+    except (ValueError, RecursionError) as exc:
+        raise RelayError("stored relay cursor is invalid; reconcile it before pushing") from exc
     if not _is_json_object(decoded):
-        return _Cursor(0, 0, 0)
+        raise RelayError("stored relay cursor is not an object")
+    for field in ("inode", "offset", "sequence"):
+        value = decoded.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise RelayError("stored relay cursor has invalid fields")
     return _Cursor(
         max(_as_int(decoded.get("inode")), 0),
         max(_as_int(decoded.get("offset")), 0),
@@ -484,10 +489,29 @@ def _post_status(
     receipt = response.get("receipt")
     if not isinstance(receipt, str) or not receipt:
         raise RelayError("relay response did not include a receipt")
+    if (
+        response.get("source") != payload["source"]
+        or _as_int(response.get("sequence")) != payload["sequence"]
+    ):
+        raise RelayError("relay receipt does not match the submitted status")
     return receipt
 
 
 def push_status_file(
+    config: Config,
+    store: Store,
+    peer: RelayPeer,
+    path: Path,
+    http: HttpClient | None = None,
+) -> list[str]:
+    """Push with one peer-specific owner so concurrent writers cannot regress cursors."""
+    identity = json.dumps([store.path.name, peer.name]).encode()
+    digest = hashlib.sha256(identity).hexdigest()
+    with RunnerLock(store.path.parent / f"relay-{digest}.lock"):
+        return _push_status_file(config, store, peer, path, http)
+
+
+def _push_status_file(
     config: Config,
     store: Store,
     peer: RelayPeer,

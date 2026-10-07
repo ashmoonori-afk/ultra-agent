@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import TracebackType
 from urllib.parse import urlsplit
@@ -33,7 +34,72 @@ from ultra_agent.relay import (
     push_status_file,
     serve_relay,
 )
+from ultra_agent.runner_lock import RunnerBusy
 from ultra_agent.store import Store
+
+
+class _ReceiptClient(HttpClient):
+    def __init__(self, wrong: bool = False) -> None:
+        super().__init__()
+        self.wrong = wrong
+
+    def request(self, method, url, headers, payload=None):
+        return {
+            "receipt": "fixture-receipt",
+            "source": "other" if self.wrong else payload["source"],
+            "sequence": payload["sequence"],
+        }
+
+
+def test_wrong_receipt_cannot_advance_sender_cursor(tmp_path, monkeypatch):
+    monkeypatch.setenv(_SOURCE_ENV, _TOKEN)
+    store = Store(tmp_path / "state" / "runtime.db")
+    path = tmp_path / "status.txt"
+    path.write_text("PROGRESS marker\n")
+    peer = RelayPeer("peer", "http://127.0.0.1", "source", _SOURCE_ENV)
+    with pytest.raises(RelayError):
+        push_status_file(Config(tmp_path), store, peer, path, _ReceiptClient(wrong=True))
+    cursor = json.loads(store.get_checkpoint("relay-push:peer"))
+    assert cursor["sequence"] == 0 and cursor["offset"] == 0
+
+
+def test_corrupt_sender_cursor_does_not_reset_sequence(tmp_path, monkeypatch):
+    monkeypatch.setenv(_SOURCE_ENV, _TOKEN)
+    store = Store(tmp_path / "state" / "runtime.db")
+    store.set_checkpoint("relay-push:peer", "not-json")
+    path = tmp_path / "status.txt"
+    path.write_text("PROGRESS marker\n")
+    peer = RelayPeer("peer", "http://127.0.0.1", "source", _SOURCE_ENV)
+    with pytest.raises(RelayError):
+        push_status_file(Config(tmp_path), store, peer, path, _ReceiptClient())
+    assert store.get_checkpoint("relay-push:peer") == "not-json"
+
+
+def test_sender_excludes_overlapping_peer_pushes(tmp_path, monkeypatch):
+    monkeypatch.setenv(_SOURCE_ENV, _TOKEN)
+    entered, release = threading.Event(), threading.Event()
+
+    class BlockingClient(_ReceiptClient):
+        def request(self, method, url, headers, payload=None):
+            entered.set()
+            assert release.wait(5)
+            return super().request(method, url, headers, payload)
+
+    store = Store(tmp_path / "state" / "runtime.db")
+    path = tmp_path / "status.txt"
+    path.write_text("PROGRESS marker\n")
+    peer = RelayPeer("peer", "http://127.0.0.1", "source", _SOURCE_ENV)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            push_status_file, Config(tmp_path), store, peer, path, BlockingClient()
+        )
+        try:
+            assert entered.wait(5)
+            with pytest.raises(RunnerBusy):
+                push_status_file(Config(tmp_path), store, peer, path, _ReceiptClient())
+        finally:
+            release.set()
+        assert future.result(timeout=5) == ["fixture-receipt"]
 
 _TOKEN = "relay-fixture-secret"
 _SOURCE_ENV = "RELAY_LAPTOP_TOKEN"
