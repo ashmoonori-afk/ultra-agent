@@ -574,6 +574,37 @@ class Registry:
             )
             return updated
 
+    def settle(self, key: str, revision: int, now: float, note: str) -> Lane:
+        """Atomically close a checked claim, excluding late work and objections."""
+        _finite(now)
+        with self._store.connection() as connection:
+            lane = self._require(connection, key)
+            if (
+                lane.revision != revision or lane.status != "done-claimed"
+                or lane.deadline is None or now < lane.deadline
+            ):
+                raise RegistryError("claim changed or its objection window is open")
+            if connection.execute(
+                "SELECT id FROM jobs WHERE lane = ? AND status IN "
+                "('awaiting_approval', 'queued', 'running', 'uncertain') LIMIT 1",
+                (key,),
+            ).fetchone() is not None:
+                raise RegistryError("unfinished work prevents closure")
+            verified = replace(
+                lane, status="verified-done", claim_at=None, deadline=None,
+                claim_emitted=False, revision=lane.revision + 1,
+            )
+            self._write_lane(connection, verified)
+            _insert_history(
+                connection, key, verified.revision, now, "verified-done", note, "verification"
+            )
+            closed = replace(verified, status="closed", revision=verified.revision + 1)
+            self._write_lane(connection, closed)
+            _insert_history(
+                connection, key, closed.revision, now, "closed", note, "verification"
+            )
+            return closed
+
     def mark_claim_emitted(self, key: str) -> Lane:
         """Record that the one allowed claim notification has been sent."""
         with self._store.connection() as connection:
