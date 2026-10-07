@@ -314,11 +314,12 @@ def test_finished_reply_preserves_inbound_thread(tmp_path: Path) -> None:
     store = Store(_db(tmp_path))
     job_id = store.enqueue(Submission(
         "thread:42", "reply", approved=True, channel_id="7",
-        reply_to="42", platform="discord",
+        reply_to="42", thread_id="99", platform="telegram",
     ))
     store.claim()
     store.finish(job_id, "completed", result="answer")
     assert store.deliveries()[0].reply_to == "42"
+    assert store.deliveries()[0].thread_id == "99"
 
 
 def test_claim_records_the_lane_session_identity(tmp_path: Path) -> None:

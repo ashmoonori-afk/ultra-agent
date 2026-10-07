@@ -151,6 +151,7 @@ class Submission:
     approved: bool = False
     channel_id: str | None = None
     reply_to: str | None = None
+    thread_id: str | None = None
     lane: str = DEFAULT_LANE
     platform: Platform | None = None
     heavy: bool = True
@@ -166,6 +167,7 @@ class Job:
     approved: bool = False
     channel_id: str | None = None
     reply_to: str | None = None
+    thread_id: str | None = None
     lane: str = DEFAULT_LANE
     platform: Platform | None = None
     heavy: bool = True
@@ -186,6 +188,7 @@ class Delivery:
     content: str
     job_id: str | None = None
     reply_to: str | None = None
+    thread_id: str | None = None
     status: DeliveryStatus = "pending"
     remote_id: str | None = None
     ordinal: int = 0

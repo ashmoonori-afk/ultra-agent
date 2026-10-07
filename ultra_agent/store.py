@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     approved INTEGER NOT NULL DEFAULT 0,
     channel_id TEXT,
     reply_to TEXT,
+    thread_id TEXT,
     lane TEXT NOT NULL DEFAULT 'default',
     platform TEXT,
     heavy INTEGER NOT NULL DEFAULT 1,
@@ -96,6 +97,7 @@ CREATE TABLE IF NOT EXISTS deliveries (
     channel_id TEXT NOT NULL,
     content TEXT NOT NULL,
     reply_to TEXT,
+    thread_id TEXT,
     job_id TEXT,
     source_key TEXT,
     status TEXT NOT NULL,
@@ -273,8 +275,8 @@ class Store:
             """
             INSERT INTO jobs (
                 id, source_key, prompt, approved, channel_id, reply_to,
-                lane, platform, heavy, status, retry_of
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                thread_id, lane, platform, heavy, status, retry_of
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -283,6 +285,7 @@ class Store:
                 int(submission.approved),
                 submission.channel_id,
                 submission.reply_to,
+                submission.thread_id,
                 submission.lane,
                 submission.platform,
                 int(submission.heavy),
@@ -310,6 +313,7 @@ class Store:
             approved=_as_bool(row.get("approved")),
             channel_id=_as_opt_str(row.get("channel_id")),
             reply_to=_as_opt_str(row.get("reply_to")),
+            thread_id=_as_opt_str(row.get("thread_id")),
             lane=_as_str(row.get("lane")) or DEFAULT_LANE,
             platform=_platform(row.get("platform")),
             heavy=_as_bool(row.get("heavy")),
@@ -329,6 +333,7 @@ class Store:
             content=_as_str(row.get("content")),
             job_id=_as_opt_str(row.get("job_id")),
             reply_to=_as_opt_str(row.get("reply_to")),
+            thread_id=_as_opt_str(row.get("thread_id")),
             status=_delivery_status(row.get("status")),
             remote_id=_as_opt_str(row.get("remote_id")),
             ordinal=_as_int(row.get("ordinal")),
@@ -374,6 +379,7 @@ class Store:
                 original.prompt != submission.prompt
                 or original.channel_id != submission.channel_id
                 or original.reply_to != submission.reply_to
+                or original.thread_id != submission.thread_id
                 or original.lane != submission.lane
                 or original.platform != submission.platform
                 or original.heavy != submission.heavy
@@ -486,7 +492,7 @@ class Store:
             if status == "completed" and result:
                 row = self._one(
                     connection,
-                    "SELECT channel_id, platform, reply_to FROM jobs WHERE id = ?",
+                    "SELECT channel_id, platform, reply_to, thread_id FROM jobs WHERE id = ?",
                     (job_id,),
                 )
                 channel_id = _as_opt_str(row.get("channel_id")) if row is not None else None
@@ -500,6 +506,7 @@ class Store:
                             channel_id=channel_id,
                             content=chunk,
                             reply_to=_as_opt_str(row.get("reply_to")) if row else None,
+                            thread_id=_as_opt_str(row.get("thread_id")) if row else None,
                             job_id=job_id,
                             source_key=None,
                             status="pending",
@@ -561,6 +568,7 @@ class Store:
                 approved=False,
                 channel_id=_as_opt_str(row.get("channel_id")),
                 reply_to=_as_opt_str(row.get("reply_to")),
+                thread_id=_as_opt_str(row.get("thread_id")),
                 lane=_as_str(row.get("lane")) or DEFAULT_LANE,
                 platform=_platform(row.get("platform")),
                 heavy=_as_bool(row.get("heavy")),
@@ -576,6 +584,7 @@ class Store:
         channel_id: str,
         content: str,
         reply_to: str | None,
+        thread_id: str | None = None,
         job_id: str | None,
         source_key: str | None,
         status: DeliveryStatus,
@@ -587,8 +596,8 @@ class Store:
             """
             INSERT INTO deliveries (
                 id, platform, channel_id, content, reply_to, job_id,
-                source_key, status, remote_id, ordinal
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                thread_id, source_key, status, remote_id, ordinal
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 delivery_id,
@@ -597,6 +606,7 @@ class Store:
                 content,
                 reply_to,
                 job_id,
+                thread_id,
                 source_key,
                 status,
                 remote_id,
@@ -613,6 +623,7 @@ class Store:
         reply_to: str | None = None,
         job_id: str | None = None,
         source_key: str | None = None,
+        thread_id: str | None = None,
     ) -> str:
         """Append one pending outbound chunk, for the relay or an adapter.
 
@@ -637,6 +648,7 @@ class Store:
                 channel_id=channel,
                 content=content,
                 reply_to=reply_to,
+                thread_id=thread_id,
                 job_id=job_id,
                 source_key=source_key,
                 status="pending",
@@ -747,6 +759,7 @@ class Store:
                 channel_id=_as_str(row.get("channel_id")),
                 content=_as_str(row.get("content")),
                 reply_to=_as_opt_str(row.get("reply_to")),
+                thread_id=_as_opt_str(row.get("thread_id")),
                 job_id=job_id,
                 source_key=None,
                 status="pending",
